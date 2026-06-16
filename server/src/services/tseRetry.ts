@@ -26,11 +26,14 @@ export function startRetryLoop(): void {
         db.prepare(`
           UPDATE tabs SET
             tse_signature = ?,
+            tse_start_time = ?,
             tse_timestamp = ?,
             tse_transaction_number = ?,
+            tse_signature_counter = ?,
             tse_status = 'ok'
           WHERE id = ?
-        `).run(result.tse_signature, result.tse_timestamp, result.tse_transaction_number, tab.id);
+        `).run(result.tse_signature, result.tse_start_time, result.tse_timestamp,
+               result.tse_transaction_number, result.tse_signature_counter, tab.id);
 
         console.log(`[tse] retroactively signed tab ${tab.id} (${tab.customer_name}), tx=${result.tse_transaction_number}`);
 
@@ -43,5 +46,5 @@ export function startRetryLoop(): void {
         // network still down — silently retry next interval
       }
     }
-  }, 30_000);
+  }, 5 * 60_000);
 }
