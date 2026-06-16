@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "outDir": "dist",
+    "rootDir": "..",
+    "paths": {
+      "@downtown/shared": ["../shared/types"]
+    }
+  },
+  "include": ["src/**/*"]
+}

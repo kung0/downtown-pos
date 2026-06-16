@@ -1,0 +1,221 @@
+import { useState, useEffect, useCallback } from 'react';
+import type { Tab, WSMessage } from '@downtown/shared';
+import { tabsApi } from '../api';
+import { subscribe } from '../lib/liveUpdates';
+import { formatDateTime } from '../utils/time';
+import { formatMoney } from '../utils/money';
+import { useSession } from '../context/SessionContext';
+
+export default function HistoryPage() {
+  const { session }               = useSession();
+  const [tabs, setTabs]           = useState<Tab[]>([]);
+  const [search, setSearch]       = useState('');
+  const [expandedId, setExpanded] = useState<number | null>(null);
+  const [loading, setLoading]     = useState(false);
+
+  const sessionId = session?.id;
+
+  const load = useCallback(async (sid: number | undefined) => {
+    setLoading(true);
+    try {
+      setTabs(await tabsApi.history(sid));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(sessionId); }, [sessionId, load]);
+
+  useEffect(() => {
+    return subscribe((msg: WSMessage) => {
+      if (msg.type === 'tab:closed' || msg.type === 'tab:voided') {
+        const incoming = msg.data as Tab;
+        if (sessionId == null || incoming.session_id === sessionId) {
+          setTabs(prev => {
+            const exists = prev.find(t => t.id === incoming.id);
+            if (exists) return prev.map(t => t.id === incoming.id ? incoming : t);
+            return [incoming, ...prev];
+          });
+        }
+      }
+    });
+  }, [sessionId]);
+
+  const filtered = tabs.filter(t =>
+    t.customer_name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="page">
+      <div className="page__header">
+        <h1 className="page__title">History</h1>
+        <input
+          type="search"
+          placeholder="Search name…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            padding: '7px 10px',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            fontSize: '14px',
+            background: 'var(--surface)',
+            color: 'var(--text)',
+            width: '180px',
+          }}
+        />
+      </div>
+
+      <div style={{ padding: '16px 24px', maxWidth: 720 }}>
+        {loading && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Loading…</p>
+        )}
+        {!loading && filtered.length === 0 && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+            {search ? 'No tabs match that name.' : 'No closed tabs this shift.'}
+          </p>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {filtered.map(tab => (
+            <HistoryCard
+              key={tab.id}
+              tab={tab}
+              expanded={expandedId === tab.id}
+              onToggle={() => setExpanded(prev => prev === tab.id ? null : tab.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean; onToggle: () => void }) {
+  const closedAt = tab.closed_at ?? tab.voided_at;
+  const isVoided = tab.status === 'voided';
+
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: `1.5px solid ${expanded ? 'var(--primary)' : 'var(--border)'}`,
+        borderRadius: 'var(--radius)',
+        overflow: 'hidden',
+      }}
+    >
+      <button
+        onClick={onToggle}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          width: '100%',
+          padding: '12px 16px',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {tab.customer_name}
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+            {closedAt ? formatDateTime(closedAt) : '—'}
+          </div>
+        </div>
+        <span className={`badge ${isVoided ? 'badge--gray' : 'badge--green'}`}>
+          {isVoided ? 'voided' : 'closed'}
+        </span>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: '14px' }}>
+            {tab.total_cents != null ? formatMoney(tab.total_cents) : '—'}
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            {tab.payment_method ?? ''}
+          </div>
+        </div>
+        <span style={{ color: 'var(--text-muted)', fontSize: '12px', marginLeft: '4px' }}>
+          {expanded ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {expanded && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '14px 16px' }}>
+          {tab.items && tab.items.length > 0 ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginBottom: '12px' }}>
+              <tbody>
+                {tab.items.map(item => (
+                  <tr key={item.id}>
+                    <td style={{ padding: '3px 0', color: 'var(--text)' }}>
+                      {item.quantity}× {item.name_snapshot}
+                      {item.note && <span style={{ color: 'var(--text-muted)' }}> · {item.note}</span>}
+                    </td>
+                    <td style={{ padding: '3px 0', textAlign: 'right', color: 'var(--text)' }}>
+                      {formatMoney(item.price_snapshot_cents * item.quantity)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px' }}>No items.</p>
+          )}
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px' }}>
+            {tab.subtotal_cents != null && (
+              <Row label="Subtotal" value={formatMoney(tab.subtotal_cents)} />
+            )}
+            {tab.tip_cents > 0 && (
+              <Row label="Tip" value={formatMoney(tab.tip_cents)} />
+            )}
+            {tab.total_cents != null && (
+              <Row label="Total" value={formatMoney(tab.total_cents)} bold />
+            )}
+            {(tab.tax_standard_cents != null && tab.tax_standard_cents > 0) && (
+              <Row label="MwSt. 19 %" value={formatMoney(tab.tax_standard_cents)} muted />
+            )}
+            {(tab.tax_reduced_cents != null && tab.tax_reduced_cents > 0) && (
+              <Row label="MwSt. 7 %" value={formatMoney(tab.tax_reduced_cents)} muted />
+            )}
+            {tab.payment_method && (
+              <Row label="Payment" value={tab.payment_method} muted />
+            )}
+            {tab.card_masked_pan && (
+              <Row label="Card" value={tab.card_masked_pan} muted />
+            )}
+          </div>
+
+          {tab.notes && (
+            <p style={{ marginTop: '10px', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Note: {tab.notes}
+            </p>
+          )}
+          {isVoided && tab.void_reason && (
+            <p style={{ marginTop: '10px', fontSize: '13px', color: 'var(--danger)' }}>
+              Void reason: {tab.void_reason}
+            </p>
+          )}
+          {tab.original_tab_id && (
+            <p style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+              Voided from tab #{tab.original_tab_id}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value, bold, muted }: { label: string; value: string; bold?: boolean; muted?: boolean }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', color: muted ? 'var(--text-muted)' : 'var(--text)', fontWeight: bold ? 700 : 400 }}>
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}

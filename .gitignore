@@ -26,3 +26,13 @@ logs/
 # IDE
 .vscode/
 .idea/
+
+# SQLite data
+server/data/
+server/*.db
+server/*.db-shm
+server/*.db-wal
+
+# Test output
+test-results/
+playwright-report/
