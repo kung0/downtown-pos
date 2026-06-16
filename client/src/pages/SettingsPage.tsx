@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { Settings } from '@downtown/shared';
-import { settingsApi } from '../api';
+import { settingsApi, printerApi } from '../api';
 import { formatMoney } from '../utils/money';
 
 function parseRate(s: string): number | null {
@@ -41,6 +41,15 @@ export default function SettingsPage() {
   const [saving, setSaving]         = useState(false);
   const [saved, setSaved]           = useState(false);
 
+  // printer state
+  const [printerIp, setPrinterIp]         = useState('');
+  const [autoPrint, setAutoPrint]         = useState(false);
+  const [printerStatus, setPrinterStatus] = useState<{ configured: boolean; ip?: string; online: boolean } | null>(null);
+  const [savingPrinter, setSavingPrinter] = useState(false);
+  const [savedPrinter, setSavedPrinter]   = useState(false);
+  const [testing, setTesting]             = useState(false);
+  const [testMsg, setTestMsg]             = useState('');
+
   useEffect(() => {
     settingsApi.get().then(s => {
       setSettings(s);
@@ -48,7 +57,11 @@ export default function SettingsPage() {
       setPeak(toInput(s.pool_rate_peak_cents));
       setDiscount(toInput(s.pool_rate_daytime_discount_cents));
       setDart(toInput(s.dart_hourly_rate_cents));
+      setPrinterIp(s.printer_ip ?? '');
+      setAutoPrint(s.printer_auto_print ?? false);
     }).catch(console.error);
+
+    printerApi.status().then(setPrinterStatus).catch(console.error);
   }, []);
 
   const standardCents = parseRate(standard);
@@ -83,10 +96,44 @@ export default function SettingsPage() {
     }
   }
 
-  // Computed preview using current input values
+  async function handleSavePrinter() {
+    setSavingPrinter(true);
+    try {
+      const updated = await settingsApi.update({ printer_ip: printerIp.trim(), printer_auto_print: autoPrint });
+      setSettings(updated);
+      setSavedPrinter(true);
+      setTimeout(() => setSavedPrinter(false), 2000);
+      const status = await printerApi.status();
+      setPrinterStatus(status);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSavingPrinter(false);
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestMsg('');
+    try {
+      await printerApi.test();
+      setTestMsg('Test page sent!');
+    } catch (e) {
+      setTestMsg((e as Error).message);
+    } finally {
+      setTesting(false);
+      setTimeout(() => setTestMsg(''), 4000);
+    }
+  }
+
   const s  = standardCents ?? (settings?.pool_rate_standard_cents ?? 1200);
   const p  = peakCents     ?? (settings?.pool_rate_peak_cents ?? 1600);
   const d  = discountCents ?? (settings?.pool_rate_daytime_discount_cents ?? 400);
+
+  const printerDirty = settings !== null && (
+    printerIp.trim() !== (settings.printer_ip ?? '') ||
+    autoPrint !== (settings.printer_auto_print ?? false)
+  );
 
   return (
     <div className="page">
@@ -154,6 +201,74 @@ export default function SettingsPage() {
                 disabled={saving || !dirty || dartCents === null}
               >
                 {saving ? 'Saving…' : saved ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section__title">Printer — Epson TM-M30 III</div>
+
+            <div className="settings-section__fields">
+              <div className="field">
+                <label className="field__label">Printer IP address</label>
+                <input
+                  type="text"
+                  className="price-input__field"
+                  style={{ padding: '8px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', width: '200px', fontFamily: 'monospace', fontSize: '14px', background: 'var(--surface)', color: 'var(--text)' }}
+                  placeholder="192.168.1.100"
+                  value={printerIp}
+                  onChange={e => { setPrinterIp(e.target.value); setSavedPrinter(false); }}
+                />
+              </div>
+
+              <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                <input
+                  type="checkbox"
+                  id="auto-print"
+                  checked={autoPrint}
+                  onChange={e => { setAutoPrint(e.target.checked); setSavedPrinter(false); }}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                <label htmlFor="auto-print" className="field__label" style={{ marginBottom: 0, cursor: 'pointer' }}>
+                  Auto-print receipt on tab close
+                </label>
+              </div>
+            </div>
+
+            {printerStatus && (
+              <div style={{ marginTop: '10px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{
+                  width: 8, height: 8, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
+                  background: !printerStatus.configured ? 'var(--text-muted)' : printerStatus.online ? '#22c55e' : '#ef4444',
+                }} />
+                <span style={{ color: 'var(--text-muted)' }}>
+                  {!printerStatus.configured ? 'No IP configured' : printerStatus.online ? `Online · ${printerStatus.ip}` : `Offline · ${printerStatus.ip}`}
+                </span>
+              </div>
+            )}
+
+            <div className="settings-section__footer">
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  className="btn"
+                  onClick={handleTest}
+                  disabled={testing || !printerIp.trim()}
+                  title="Print a test page"
+                >
+                  {testing ? 'Printing…' : 'Test print'}
+                </button>
+                {testMsg && (
+                  <span style={{ fontSize: '13px', color: testMsg.includes('!') ? '#22c55e' : 'var(--danger)' }}>
+                    {testMsg}
+                  </span>
+                )}
+              </div>
+              <button
+                className="btn btn--primary"
+                onClick={handleSavePrinter}
+                disabled={savingPrinter || !printerDirty}
+              >
+                {savingPrinter ? 'Saving…' : savedPrinter ? 'Saved!' : 'Save'}
               </button>
             </div>
           </div>

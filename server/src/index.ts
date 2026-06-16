@@ -17,6 +17,7 @@ import { initWSServer } from './ws/server';
 import { resumeActiveTickers } from './ws/ticker';
 import { startRetryLoop } from './services/tseRetry';
 import { errorHandler } from './middleware/errors';
+import printerRouter from './routes/printer';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
@@ -40,6 +41,7 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/waitlist', waitlistRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/categories', categoriesRouter);
+app.use('/api/printer', printerRouter);
 
 app.use(errorHandler);
 

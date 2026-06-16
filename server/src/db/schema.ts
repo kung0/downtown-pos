@@ -121,6 +121,8 @@ export function initSchema(): void {
   try { db.exec('ALTER TABLE tabs ADD COLUMN tse_status TEXT'); } catch {}
   try { db.exec('ALTER TABLE tabs ADD COLUMN subtotal_standard_cents INTEGER'); } catch {}
   try { db.exec('ALTER TABLE tabs ADD COLUMN subtotal_reduced_cents INTEGER'); } catch {}
+  try { db.exec('ALTER TABLE tabs ADD COLUMN tse_start_time TEXT'); } catch {}
+  try { db.exec('ALTER TABLE tabs ADD COLUMN tse_signature_counter INTEGER'); } catch {}
 
   // Set correct tax_category based on product category (idempotent)
   db.exec(`

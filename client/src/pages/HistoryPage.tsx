@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Tab, WSMessage } from '@downtown/shared';
-import { tabsApi } from '../api';
+import { tabsApi, printerApi } from '../api';
 import { subscribe } from '../lib/liveUpdates';
 import { formatDateTime } from '../utils/time';
 import { formatMoney } from '../utils/money';
@@ -95,6 +95,23 @@ export default function HistoryPage() {
 function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean; onToggle: () => void }) {
   const closedAt = tab.closed_at ?? tab.voided_at;
   const isVoided = tab.status === 'voided';
+  const [printing, setPrinting] = useState(false);
+  const [printMsg, setPrintMsg] = useState('');
+
+  async function handlePrint(e: React.MouseEvent) {
+    e.stopPropagation();
+    setPrinting(true);
+    setPrintMsg('');
+    try {
+      await printerApi.printReceipt(tab.id);
+      setPrintMsg('Sent!');
+    } catch (err) {
+      setPrintMsg((err as Error).message);
+    } finally {
+      setPrinting(false);
+      setTimeout(() => setPrintMsg(''), 3000);
+    }
+  }
 
   return (
     <div
@@ -205,6 +222,22 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
               Voided from tab #{tab.original_tab_id}
             </p>
           )}
+
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              className="btn"
+              style={{ fontSize: '13px', padding: '5px 12px' }}
+              onClick={handlePrint}
+              disabled={printing}
+            >
+              {printing ? 'Printing…' : 'Print receipt'}
+            </button>
+            {printMsg && (
+              <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>
+                {printMsg}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>

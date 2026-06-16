@@ -4,6 +4,18 @@ import db from '../db/client';
 import { buildTab, logEvent, computeTaxBreakdown, writeClose } from '../db/helpers';
 import { broadcast } from '../ws/server';
 import { signOrOffline } from '../services/tse';
+import { buildReceipt } from '../printer/escpos';
+import { sendToPrinter } from '../printer/client';
+import type { Tab } from '@downtown/shared';
+
+function maybePrint(tab: Tab): void {
+  const rows = db.prepare("SELECT key, value FROM settings WHERE key IN ('printer_ip', 'printer_auto_print')").all() as { key: string; value: string }[];
+  const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  if (map.printer_auto_print !== '1' || !map.printer_ip?.trim()) return;
+  sendToPrinter(map.printer_ip.trim(), buildReceipt(tab)).catch(err =>
+    console.error('[printer] auto-print failed:', err.message)
+  );
+}
 
 const router = Router();
 
@@ -116,6 +128,7 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
     const tabId = doQuickPay();
     const closedTab = buildTab(tabId)!;
     broadcast({ type: 'tab:closed', data: closedTab });
+    maybePrint(closedTab);
     res.status(201).json(closedTab);
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
@@ -406,6 +419,7 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     const remainingTab = buildTab(tabId)!;
     broadcast({ type: 'tab:closed', data: paidTab });
     broadcast({ type: 'tab:updated', data: remainingTab });
+    maybePrint(paidTab);
     res.json({ paid_tab: paidTab, remaining_tab: remainingTab });
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
@@ -458,6 +472,7 @@ router.post('/:id/close', async (req: Request, res: Response) => {
 
   const closedTab = buildTab(tabId)!;
   broadcast({ type: 'tab:closed', data: closedTab });
+  maybePrint(closedTab);
   res.json(closedTab);
 });
 

@@ -118,3 +118,9 @@ export const settingsApi = {
   update: (data: Partial<Settings>) =>
     req<Settings>('/settings', { method: 'PATCH', body: JSON.stringify(data) }),
 };
+
+export const printerApi = {
+  status: () => req<{ configured: boolean; ip?: string; online: boolean }>('/printer/status'),
+  test: () => req<{ ok: boolean }>('/printer/test', { method: 'POST' }),
+  printReceipt: (tabId: number) => req<{ ok: boolean }>(`/printer/receipt/${tabId}`, { method: 'POST' }),
+};

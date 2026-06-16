@@ -265,12 +265,37 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
 
   async function handleAddWaitlist() {
     if (!pagerInput.trim() || addTabId === null) return;
+    const entryData = {
+      pager_number: pagerInput.trim(),
+      type: addType,
+      tab_id: addTabId,
+      notes: notesInput.trim() || undefined,
+    };
+    const prev = waitlist.slice();
     try {
       const updated = await waitlistApi.add(
-        pagerInput.trim(), addType, addTabId, notesInput.trim() || undefined
+        entryData.pager_number, entryData.type, entryData.tab_id, entryData.notes
       );
       setWaitlist(updated);
       setShowAdd(false);
+      const newEntry = updated.find(e => !prev.some(p => p.id === e.id));
+      if (newEntry) {
+        const ids = { current: newEntry.id };
+        pushUndo({
+          label: `Add · Pager ${entryData.pager_number}`,
+          undo: async () => {
+            const r = await waitlistApi.remove(ids.current);
+            setWaitlist(r);
+          },
+          redo: async () => {
+            const r = await waitlistApi.add(
+              entryData.pager_number, entryData.type, entryData.tab_id, entryData.notes
+            );
+            setWaitlist(r);
+            ids.current = r.reduce((mx, e) => e.id > mx.id ? e : mx).id;
+          },
+        });
+      }
     } catch (e) { alert((e as Error).message); }
   }
 
@@ -286,11 +311,48 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
   }
 
   async function handleMove(id: number, direction: 'up' | 'down') {
-    try { setWaitlist(await waitlistApi.move(id, direction)); } catch (e) { alert((e as Error).message); }
+    const entry = waitlist.find(w => w.id === id);
+    try {
+      const updated = await waitlistApi.move(id, direction);
+      setWaitlist(updated);
+      pushUndo({
+        label: `Move ${direction === 'up' ? '▲' : '▼'} · Pager ${entry?.pager_number ?? id}`,
+        undo: async () => {
+          const r = await waitlistApi.move(id, direction === 'up' ? 'down' : 'up');
+          setWaitlist(r);
+        },
+        redo: async () => {
+          const r = await waitlistApi.move(id, direction);
+          setWaitlist(r);
+        },
+      });
+    } catch (e) { alert((e as Error).message); }
   }
 
   async function handleRemove(id: number) {
-    try { setWaitlist(await waitlistApi.remove(id)); } catch (e) { alert((e as Error).message); }
+    const entry = waitlist.find(w => w.id === id);
+    if (!entry) return;
+    try {
+      const removed = await waitlistApi.remove(id);
+      setWaitlist(removed);
+      const ids = { current: null as number | null };
+      pushUndo({
+        label: `Remove · Pager ${entry.pager_number}`,
+        undo: async () => {
+          const r = await waitlistApi.add(
+            entry.pager_number, entry.type, entry.tab_id!, entry.notes ?? undefined
+          );
+          setWaitlist(r);
+          ids.current = r.reduce((mx, e) => e.id > mx.id ? e : mx).id;
+        },
+        redo: async () => {
+          if (ids.current === null) return;
+          const r = await waitlistApi.remove(ids.current);
+          setWaitlist(r);
+          ids.current = null;
+        },
+      });
+    } catch (e) { alert((e as Error).message); }
   }
 
   const billiardTables   = tables.filter(t => t.type === 'billiard');

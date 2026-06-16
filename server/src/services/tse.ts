@@ -10,8 +10,10 @@ export interface TseInput {
 
 export interface TseResult {
   tse_signature: string;
-  tse_timestamp: string;
+  tse_start_time: string;
+  tse_timestamp: string;         // = time_end
   tse_transaction_number: string;
+  tse_signature_counter: number;
 }
 
 const FISKALY_BASE = 'https://kassensichv-middleware.fiskaly.com/api/v2';
@@ -83,10 +85,13 @@ function centsToDecimal(cents: number): string {
 
 export async function signTransaction(input: TseInput): Promise<TseResult> {
   if (MOCK_MODE) {
+    const now = new Date().toISOString();
     return {
       tse_signature: `MOCK-SIG-${uuidv4()}`,
-      tse_timestamp: new Date().toISOString(),
+      tse_start_time: now,
+      tse_timestamp: now,
       tse_transaction_number: String(Math.floor(Math.random() * 900_000) + 100_000),
+      tse_signature_counter: Math.floor(Math.random() * 9_000) + 1_000,
     };
   }
 
@@ -146,13 +151,16 @@ export async function signTransaction(input: TseInput): Promise<TseResult> {
 
   const result = await finishedResp.json() as {
     number: number;
+    time_start: number;
     time_end: number;
-    signature: { value: string };
+    signature: { value: string; counter: number };
   };
 
   return {
     tse_signature: result.signature.value,
+    tse_start_time: new Date(result.time_start * 1000).toISOString(),
     tse_timestamp: new Date(result.time_end * 1000).toISOString(),
     tse_transaction_number: String(result.number),
+    tse_signature_counter: result.signature.counter,
   };
 }

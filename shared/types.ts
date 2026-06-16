@@ -39,6 +39,7 @@ export interface LineItem {
   created_at: string;
   session_started_at?: string | null;
   session_ended_at?: string | null;
+  session_computed_cost_cents?: number | null;
 }
 
 export interface Tab {
@@ -61,8 +62,10 @@ export interface Tab {
   card_auth_code: string | null;
   card_masked_pan: string | null;
   tse_signature: string | null;
+  tse_start_time: string | null;
   tse_timestamp: string | null;
   tse_transaction_number: string | null;
+  tse_signature_counter: number | null;
   tse_status: 'ok' | 'offline' | null;
   subtotal_standard_cents: number | null;
   subtotal_reduced_cents: number | null;
@@ -112,6 +115,8 @@ export interface Settings {
   pool_rate_peak_cents: number;
   pool_rate_daytime_discount_cents: number;
   dart_hourly_rate_cents: number;
+  printer_ip: string;
+  printer_auto_print: boolean;
 }
 
 export interface DailySummary {

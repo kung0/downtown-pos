@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Tab, Product, Category, WSMessage } from '@downtown/shared';
-import { tabsApi, productsApi, categoriesApi } from '../api';
+import { tabsApi, productsApi, categoriesApi, printerApi } from '../api';
 import { subscribe } from '../lib/liveUpdates';
 
 interface CategoryGroup { parent: Category; children: Category[]; }
@@ -54,18 +54,21 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [tipInput, setTipInput]         = useState('');
   const [closing, setClosing]           = useState(false);
   const [receipt, setReceipt]           = useState<import('@downtown/shared').Tab | null>(null);
+  const [printing, setPrinting]         = useState(false);
+  const [printMsg, setPrintMsg]         = useState('');
   const [showDirectPay, setShowDirectPay] = useState(false);
   const [directPayMethod, setDirectPayMethod] = useState<'cash' | 'card'>('cash');
   const [directPayTip, setDirectPayTip]   = useState('');
   const [directPaying, setDirectPaying]   = useState(false);
   const [, setTick] = useState(0);
   const [sessionTicks, setSessionTicks] = useState<Record<number, { elapsed_seconds: number; running_cost_cents: number }>>({});
-  const [tabsPanelOpen, setTabsPanelOpen] = useState(true);
+  const [tabsPanelOpen, setTabsPanelOpen] = useState(() => window.innerWidth >= 768);
   const [showSplit, setShowSplit] = useState(false);
   const [splitQtys, setSplitQtys] = useState<Record<number, number>>({});
   const [splitPayMethod, setSplitPayMethod] = useState<'cash' | 'card'>('cash');
   const [splitTipInput, setSplitTipInput] = useState('');
   const [splitting, setSplitting] = useState(false);
+  const [itemQtyOverrides, setItemQtyOverrides] = useState<Record<number, number>>({});
 
   const newTabInputRef = useRef<HTMLInputElement>(null);
   const productSearchRef = useRef<HTMLInputElement>(null);
@@ -131,6 +134,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   useEffect(() => {
     setEditingNotes(false);
+    setCart([]);
+    setItemQtyOverrides({});
   }, [selectedId]);
 
   useEffect(() => {
@@ -152,17 +157,36 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setTabs(prev => prev.map(t => t.id === updated.id ? updated : t));
   }
 
-  // ── tab-mode item actions (product grid → selected tab) ───────
-  async function handleAddToTab(productId: number) {
+  // ── tab-mode item actions ─────────────────────────────────────
+  async function handleSendOrder() {
     if (!selectedId) return;
-    try { updateTab(await tabsApi.addItem(selectedId, productId, 1)); }
-    catch (e) { alert((e as Error).message); }
-  }
-
-  async function handleRemoveFromTab(itemId: number) {
-    if (!selectedId) return;
-    try { updateTab(await tabsApi.removeItem(selectedId, itemId)); }
-    catch (e) { alert((e as Error).message); }
+    const hasOverrides = (selectedTab?.items ?? []).some(i => (itemQtyOverrides[i.id] ?? i.quantity) !== i.quantity);
+    if (cartCount === 0 && !hasOverrides) return;
+    try {
+      let updated: Tab | undefined;
+      for (const { product, quantity } of cart) {
+        updated = await tabsApi.addItem(selectedId, product.id, quantity);
+      }
+      for (const item of (selectedTab?.items ?? [])) {
+        const staged = itemQtyOverrides[item.id];
+        if (staged === undefined || staged === item.quantity) continue;
+        const delta = staged - item.quantity;
+        if (delta > 0) {
+          updated = await tabsApi.addItem(selectedId, item.product_id!, delta);
+        } else {
+          for (let i = 0; i < Math.abs(delta); i++) {
+            updated = await tabsApi.removeItem(selectedId, item.id);
+          }
+        }
+      }
+      if (updated) updateTab(updated);
+      setCart([]);
+      setItemQtyOverrides({});
+      setView('detail');
+      setProductSearch('');
+    } catch (e) {
+      alert((e as Error).message);
+    }
   }
 
   // ── direct pay ───────────────────────────────────────────────
@@ -336,33 +360,32 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       : null;
 
     function renderCard(p: Product) {
-      let qty: number;
-      let lineItemId: number | undefined;
-      if (isCartMode) {
-        qty = cartQty(p.id);
-      } else {
-        const li = (selectedTab!.items ?? []).find(i => i.product_id === p.id && i.kind === 'product');
-        qty = li?.quantity ?? 0;
-        lineItemId = li?.id;
-      }
+      const stagedQty = cartQty(p.id);
+      const committedQty = !isCartMode
+        ? (selectedTab!.items ?? [])
+            .filter(i => i.product_id === p.id && i.kind === 'product')
+            .reduce((s, i) => s + i.quantity, 0)
+        : 0;
+      const totalQty = committedQty + stagedQty;
       return (
         <div
           key={p.id}
-          className={`product-card${qty > 0 ? ' product-card--in-tab' : ''}`}
-          onClick={() => isCartMode ? cartAdd(p) : handleAddToTab(p.id)}
+          className={`product-card${stagedQty > 0 ? ' product-card--in-tab' : ''}`}
+          onClick={() => cartAdd(p)}
           onMouseDown={e => e.preventDefault()}
         >
-          {qty > 0 && <span className="product-card__badge">{qty}</span>}
+          {totalQty > 0 && (
+            <span className={`product-card__badge${stagedQty === 0 ? ' product-card__badge--committed' : ''}`}>
+              {stagedQty > 0 && committedQty > 0 ? `${committedQty}+${stagedQty}` : totalQty}
+            </span>
+          )}
           <div className="product-card__name">{p.name}</div>
           <div className="product-card__price">{formatMoney(p.price_cents)}</div>
-          {qty > 0 && (
+          {stagedQty > 0 && (
             <button
               className="product-card__remove"
               onMouseDown={e => e.preventDefault()}
-              onClick={e => {
-                e.stopPropagation();
-                isCartMode ? cartRemove(p.id) : handleRemoveFromTab(lineItemId!);
-              }}
+              onClick={e => { e.stopPropagation(); cartRemove(p.id); }}
             >
               −
             </button>
@@ -580,40 +603,64 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           <div className="line-items">
             {(selectedTab.items ?? []).length === 0 ? (
               <div className="line-items__empty">No items yet — tap Add items</div>
-            ) : (selectedTab.items ?? []).map(item => (
-              <div key={item.id} className="line-item">
-                <span className="line-item__qty">{item.quantity}×</span>
-                <div className="line-item__info">
-                  <div className="line-item__name">{item.kind === 'billiard' ? item.name_snapshot.split(' · ')[0] : item.name_snapshot}</div>
-                  {item.kind === 'billiard' && item.session_started_at && item.session_ended_at && (
-                    <div className="line-item__note">
-                      {formatTime(item.session_started_at)} – {formatTime(item.session_ended_at)} · {fmtDuration(item.session_started_at, item.session_ended_at)}
-                    </div>
-                  )}
-                  {item.note && <div className="line-item__note">{item.note}</div>}
-                </div>
-                <span className="line-item__price">
-                  {formatMoney(item.price_snapshot_cents * item.quantity)}
-                </span>
-                <button
-                  className="btn btn--ghost btn--sm btn--icon"
-                  style={{ flexShrink: 0 }}
-                  onClick={() => handleRemoveFromTab(item.id)}
-                >
-                  −
-                </button>
-                {item.kind === 'product' && (
+            ) : (selectedTab.items ?? []).map(item => {
+              const displayQty = itemQtyOverrides[item.id] ?? item.quantity;
+              const changed = displayQty !== item.quantity;
+              const warning = changed ? { color: 'var(--warning, #f59e0b)', fontWeight: 700 } : undefined;
+              return (
+                <div key={item.id} className="line-item" style={displayQty === 0 ? { opacity: 0.4 } : undefined}>
+                  <span className="line-item__qty" style={warning}>{displayQty}×</span>
+                  <div className="line-item__info">
+                    <div className="line-item__name">{item.kind === 'billiard' ? item.name_snapshot.split(' · ')[0] : item.name_snapshot}</div>
+                    {item.kind === 'billiard' && item.session_started_at && item.session_ended_at && (
+                      <div className="line-item__note">
+                        {formatTime(item.session_started_at)} – {formatTime(item.session_ended_at)} · {fmtDuration(item.session_started_at, item.session_ended_at)}
+                      </div>
+                    )}
+                    {item.note && <div className="line-item__note">{item.note}</div>}
+                  </div>
+                  <span className="line-item__price">
+                    {formatMoney(item.price_snapshot_cents * displayQty)}
+                  </span>
                   <button
                     className="btn btn--ghost btn--sm btn--icon"
-                    style={{ flexShrink: 0 }}
-                    onClick={() => handleAddToTab(item.product_id!)}
+                    style={{ flexShrink: 0, ...warning }}
+                    onClick={() => setItemQtyOverrides(prev => ({ ...prev, [item.id]: Math.max(0, (prev[item.id] ?? item.quantity) - 1) }))}
                   >
-                    +
+                    −
                   </button>
-                )}
-              </div>
-            ))}
+                  {item.kind === 'product' && (
+                    <button
+                      className="btn btn--ghost btn--sm btn--icon"
+                      style={{ flexShrink: 0, ...warning }}
+                      onClick={() => setItemQtyOverrides(prev => ({ ...prev, [item.id]: (prev[item.id] ?? item.quantity) + 1 }))}
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
+
+          {(() => {
+            const hasOverrides = (selectedTab.items ?? []).some(i => (itemQtyOverrides[i.id] ?? i.quantity) !== i.quantity);
+            if (cartCount === 0 && !hasOverrides) return null;
+            return (
+              <div className="cart-bar">
+                <div className="cart-bar__row">
+                  <span className="cart-bar__label">
+                    {cartCount > 0 && `${cartCount} new`}{cartCount > 0 && hasOverrides && ' · '}{hasOverrides && 'qty changes'}
+                  </span>
+                  {cartCount > 0 && <span className="cart-bar__total">{formatMoney(cartTotal)}</span>}
+                </div>
+                <div className="cart-bar__actions">
+                  <button className="btn btn--ghost" onClick={() => { setCart([]); setItemQtyOverrides({}); }}>Discard</button>
+                  <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="detail-footer">
             <div className="detail-total">
@@ -652,7 +699,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         /* Tab product grid (adding to existing tab) */
         <div className="product-grid-panel">
           <div className="product-grid-header">
-            <button className="btn btn--ghost btn--sm" onClick={() => { setView('detail'); setProductSearch(''); }}>
+            <button className="btn btn--ghost btn--sm" onClick={() => { setView('detail'); setProductSearch(''); setCart([]); }}>
               ← {selectedTab.customer_name}
             </button>
             <input
@@ -663,13 +710,23 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
             />
-            <span className="product-grid-header__summary">
-              {(selectedTab.items ?? []).reduce((n, i) => n + i.quantity, 0)} items
-              &nbsp;·&nbsp;
-              {formatMoney(selectedTab.running_total_cents ?? 0)}
-            </span>
           </div>
           {renderProductGrid()}
+          <div className="cart-bar">
+            {cartCount === 0 ? (
+              <div className="cart-bar--empty">tap products to stage an order</div>
+            ) : (
+              <>
+                <div className="cart-bar__row">
+                  <span className="cart-bar__label">{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
+                  <span className="cart-bar__total">{formatMoney(cartTotal)}</span>
+                </div>
+                <div className="cart-bar__actions">
+                  <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -1147,7 +1204,31 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               )}
             </div>
             <div className="modal__footer">
-              <button className="btn btn--primary" style={{ flex: 1 }} onClick={() => setReceipt(null)}>
+              <button
+                className="btn"
+                disabled={printing}
+                onClick={async () => {
+                  setPrinting(true);
+                  setPrintMsg('');
+                  try {
+                    await printerApi.printReceipt(receipt.id);
+                    setPrintMsg('Sent!');
+                  } catch (e) {
+                    setPrintMsg((e as Error).message);
+                  } finally {
+                    setPrinting(false);
+                    setTimeout(() => setPrintMsg(''), 3000);
+                  }
+                }}
+              >
+                {printing ? 'Printing…' : 'Print'}
+              </button>
+              {printMsg && (
+                <span style={{ fontSize: 13, color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)', alignSelf: 'center' }}>
+                  {printMsg}
+                </span>
+              )}
+              <button className="btn btn--primary" style={{ flex: 1 }} onClick={() => { setReceipt(null); setPrintMsg(''); }}>
                 Done
               </button>
             </div>

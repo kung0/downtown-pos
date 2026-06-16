@@ -5,7 +5,6 @@ import type { Settings } from '@downtown/shared';
 
 const router = Router();
 
-// Numeric keys — stored as integer strings, validated as non-negative integers
 const NUMERIC_KEYS: (keyof Settings)[] = [
   'pool_rate_standard_cents',
   'pool_rate_peak_cents',
@@ -18,6 +17,8 @@ const DEFAULTS: Settings = {
   pool_rate_peak_cents: 1600,
   pool_rate_daytime_discount_cents: 400,
   dart_hourly_rate_cents: 800,
+  printer_ip: '',
+  printer_auto_print: false,
 };
 
 function getSettings(): Settings {
@@ -28,6 +29,8 @@ function getSettings(): Settings {
     pool_rate_peak_cents:             Number(map.pool_rate_peak_cents)             || DEFAULTS.pool_rate_peak_cents,
     pool_rate_daytime_discount_cents: Number(map.pool_rate_daytime_discount_cents) || DEFAULTS.pool_rate_daytime_discount_cents,
     dart_hourly_rate_cents:           Number(map.dart_hourly_rate_cents)           || DEFAULTS.dart_hourly_rate_cents,
+    printer_ip:                       map.printer_ip ?? '',
+    printer_auto_print:               map.printer_auto_print === '1',
   };
 }
 
@@ -48,6 +51,13 @@ router.patch('/', (req: Request, res: Response) => {
         if (!Number.isInteger(val) || val < 0) throw new Error(`invalid value for ${key}`);
         upsert.run(key, String(val));
       }
+    }
+    if ('printer_ip' in body) {
+      const val = String(body.printer_ip ?? '').trim();
+      upsert.run('printer_ip', val);
+    }
+    if ('printer_auto_print' in body) {
+      upsert.run('printer_auto_print', body.printer_auto_print ? '1' : '0');
     }
   });
 

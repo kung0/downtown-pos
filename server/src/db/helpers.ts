@@ -9,7 +9,8 @@ interface TabRow {
   tax_standard_cents: number | null; tax_reduced_cents: number | null;
   void_reason: string | null; voided_at: string | null; original_tab_id: number | null;
   card_auth_code: string | null; card_masked_pan: string | null;
-  tse_signature: string | null; tse_timestamp: string | null; tse_transaction_number: string | null;
+  tse_signature: string | null; tse_start_time: string | null; tse_timestamp: string | null;
+  tse_transaction_number: string | null; tse_signature_counter: number | null;
   tse_status: 'ok' | 'offline' | null;
   subtotal_standard_cents: number | null; subtotal_reduced_cents: number | null;
   session_id: number | null;
@@ -19,7 +20,8 @@ export function buildTab(id: number): Tab | undefined {
   const row = db.prepare('SELECT * FROM tabs WHERE id = ?').get(id) as TabRow | undefined;
   if (!row) return undefined;
   const items = db.prepare(`
-    SELECT li.*, bs.started_at AS session_started_at, bs.ended_at AS session_ended_at
+    SELECT li.*, bs.started_at AS session_started_at, bs.ended_at AS session_ended_at,
+           bs.computed_cost_cents AS session_computed_cost_cents
     FROM line_items li
     LEFT JOIN billiard_sessions bs ON bs.line_item_id = li.id
     WHERE li.tab_id = ?
@@ -108,8 +110,10 @@ export function writeClose(tabId: number, p: CloseSaleParams): void {
       card_auth_code = ?,
       card_masked_pan = ?,
       tse_signature = ?,
+      tse_start_time = ?,
       tse_timestamp = ?,
       tse_transaction_number = ?,
+      tse_signature_counter = ?,
       tse_status = ?
     WHERE id = ?
   `).run(
@@ -117,7 +121,11 @@ export function writeClose(tabId: number, p: CloseSaleParams): void {
     p.tax.subtotal_cents, p.tax.tax_cents, p.tax.tax_standard_cents, p.tax.tax_reduced_cents,
     p.tax.subtotal_standard_cents, p.tax.subtotal_reduced_cents,
     p.tip_cents, p.total_cents, p.card_auth_code, p.card_masked_pan,
-    p.tse?.tse_signature ?? null, p.tse?.tse_timestamp ?? null, p.tse?.tse_transaction_number ?? null,
+    p.tse?.tse_signature ?? null,
+    p.tse?.tse_start_time ?? null,
+    p.tse?.tse_timestamp ?? null,
+    p.tse?.tse_transaction_number ?? null,
+    p.tse?.tse_signature_counter ?? null,
     p.tse ? 'ok' : 'offline', tabId,
   );
 }
