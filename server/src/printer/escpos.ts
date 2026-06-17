@@ -9,7 +9,7 @@ const GS = 0x1D;
 const b = (...n: number[]) => Buffer.from(n);
 const LF = b(0x0A);
 const ESC_INIT = b(ESC, 0x40);
-const CODEPAGE_CP1252 = b(ESC, 0x74, 19); // WPC1252 — covers ä ö ü ß é â
+const CODEPAGE_CP1252 = b(ESC, 0x74, 16); // WPC1252 — covers ä ö ü ß é â
 const ALIGN_LEFT = b(ESC, 0x61, 0);
 const ALIGN_CENTER = b(ESC, 0x61, 1);
 const BOLD_ON = b(ESC, 0x45, 1);
