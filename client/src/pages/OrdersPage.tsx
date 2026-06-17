@@ -693,8 +693,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 className="btn btn--ghost"
                 style={{ flex: 1 }}
                 onClick={openSplitModal}
-                disabled={(selectedTab.running_total_cents ?? 0) === 0 || (selectedTab.active_sessions ?? []).length > 0}
-                title={(selectedTab.active_sessions ?? []).length > 0 ? 'Stop the running table first' : 'Pay selected items separately'}
+                disabled={(selectedTab.running_total_cents ?? 0) === 0}
+                title="Pay selected items separately"
               >
                 Split
               </button>
