@@ -79,6 +79,12 @@ export function computePoolCostSplit(startUtc: Date, endUtc: Date): number {
   return roundUpTo50(rawCents);
 }
 
+// Round elapsed seconds to the nearest 15-minute block (7.5 min is the midpoint).
+// e.g. 3 min → 0 min, 8 min → 15 min, 22 min → 15 min, 23 min → 30 min.
+export function roundToNearest15Min(elapsedSeconds: number): number {
+  return Math.round(elapsedSeconds / 900) * 900;
+}
+
 // The running/final cost of a session at instant `now`. Dart bills a flat
 // snapshot rate; pool prorates across rate boundaries (and reads live settings).
 // Used by both the live ticker and /stop, so live always matches the bill.
@@ -88,9 +94,11 @@ export function runningCostCents(
   hourlyRateSnapshotCents: number,
   now: Date,
 ): number {
+  const elapsedSeconds = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
+  const roundedSeconds = roundToNearest15Min(elapsedSeconds);
   if (tableType === 'dart') {
-    const elapsed = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-    return computeCost(elapsed, hourlyRateSnapshotCents);
+    return computeCost(roundedSeconds, hourlyRateSnapshotCents);
   }
-  return computePoolCostSplit(startedAt, now);
+  const roundedNow = new Date(startedAt.getTime() + roundedSeconds * 1000);
+  return computePoolCostSplit(startedAt, roundedNow);
 }
