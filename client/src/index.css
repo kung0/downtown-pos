@@ -699,6 +699,14 @@ select.field__input { cursor: pointer; }
   pointer-events: none;
 }
 .product-card__badge--committed { background: #a0aec0; }
+.product-card__note-icon {
+  position: absolute;
+  bottom: 3px;
+  left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
 
 .product-card__remove {
   position: absolute;

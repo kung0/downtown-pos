@@ -28,7 +28,7 @@ function fmtDuration(startIso: string, endIso: string): string {
 }
 
 
-interface CartItem { product: Product; quantity: number; }
+interface CartItem { product: Product; quantity: number; note?: string; _key: number; }
 
 interface Props { jumpTabId?: number | null; onJumpConsumed?: () => void; }
 
@@ -70,33 +70,59 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [splitTipInput, setSplitTipInput] = useState('');
   const [splitting, setSplitting] = useState(false);
   const [itemQtyOverrides, setItemQtyOverrides] = useState<Record<number, number>>({});
+  const [highlightedKey, setHighlightedKey] = useState<number | null>(null);
+  const [noteModal, setNoteModal] = useState<{ productName: string; input: string } | null>(null);
+  const [cartExpanded, setCartExpanded] = useState(false);
 
   const newTabInputRef = useRef<HTMLInputElement>(null);
   const productSearchRef = useRef<HTMLInputElement>(null);
+  const cartKeyRef = useRef(0);
   const selectedTab = tabs.find(t => t.id === selectedId) ?? null;
 
   // ── cart helpers ──────────────────────────────────────────────
-  const cartQty   = (id: number) => cart.find(c => c.product.id === id)?.quantity ?? 0;
+  const cartQty   = (id: number) => cart.filter(c => c.product.id === id).reduce((s, c) => s + c.quantity, 0);
   const cartTotal = cart.reduce((s, c) => s + c.product.price_cents * c.quantity, 0);
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
   function cartAdd(product: Product) {
-    setCart(prev => {
-      const e = prev.find(c => c.product.id === product.id);
-      return e
-        ? prev.map(c => c.product.id === product.id ? { ...c, quantity: c.quantity + 1 } : c)
-        : [...prev, { product, quantity: 1 }];
-    });
+    const unnoted = cart.find(c => c.product.id === product.id && !c.note);
+    if (unnoted) {
+      setHighlightedKey(unnoted._key);
+      setCart(prev => prev.map(c => c._key === unnoted._key ? { ...c, quantity: c.quantity + 1 } : c));
+    } else {
+      const k = cartKeyRef.current++;
+      setHighlightedKey(k);
+      setCart(prev => [...prev, { product, quantity: 1, _key: k }]);
+    }
   }
 
   function cartRemove(productId: number) {
     setCart(prev => {
-      const e = prev.find(c => c.product.id === productId);
+      const e = prev.find(c => c.product.id === productId && !c.note);
       if (!e) return prev;
       return e.quantity <= 1
-        ? prev.filter(c => c.product.id !== productId)
-        : prev.map(c => c.product.id === productId ? { ...c, quantity: c.quantity - 1 } : c);
+        ? prev.filter(c => c !== e)
+        : prev.map(c => c === e ? { ...c, quantity: c.quantity - 1 } : c);
     });
+  }
+
+  function handleAddNote(note: string) {
+    if (highlightedKey === null) return;
+    const entry = cart.find(c => c._key === highlightedKey);
+    if (!entry) { setNoteModal(null); return; }
+    if (entry.note !== undefined || entry.quantity === 1) {
+      setCart(prev => prev.map(c => c._key === highlightedKey ? { ...c, note } : c));
+    } else {
+      const k = cartKeyRef.current++;
+      setCart(prev => {
+        const i = prev.findIndex(c => c._key === highlightedKey);
+        if (i === -1) return prev;
+        const e = prev[i];
+        return [...prev.slice(0, i), { ...e, quantity: e.quantity - 1 }, ...prev.slice(i + 1), { ...e, quantity: 1, note, _key: k }];
+      });
+      setHighlightedKey(k);
+    }
+    setNoteModal(null);
   }
 
   // ── data loading ──────────────────────────────────────────────
@@ -141,6 +167,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setEditingNotes(false);
     setCart([]);
     setItemQtyOverrides({});
+    setHighlightedKey(null);
+    setCartExpanded(false);
   }, [selectedId]);
 
   useEffect(() => {
@@ -169,8 +197,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     if (cartCount === 0 && !hasOverrides) return;
     try {
       let updated: Tab | undefined;
-      for (const { product, quantity } of cart) {
-        updated = await tabsApi.addItem(selectedId, product.id, quantity);
+      for (const { product, quantity, note } of cart) {
+        updated = await tabsApi.addItem(selectedId, product.id, quantity, note);
       }
       for (const item of (selectedTab?.items ?? [])) {
         const staged = itemQtyOverrides[item.id];
@@ -187,6 +215,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       if (updated) updateTab(updated);
       setCart([]);
       setItemQtyOverrides({});
+      setHighlightedKey(null);
       setView('detail');
       setProductSearch('');
     } catch (e) {
@@ -230,8 +259,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setCreating(true);
     try {
       let currentTab = await tabsApi.create(newTabName.trim(), newTabNotes.trim() || undefined);
-      for (const { product, quantity } of cart) {
-        currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity);
+      for (const { product, quantity, note } of cart) {
+        currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity, note);
       }
       setTabs(prev => {
         const exists = prev.find(t => t.id === currentTab.id);
@@ -240,6 +269,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setSelectedId(currentTab.id);
       setView('detail');
       setCart([]);
+      setHighlightedKey(null);
       setShowNewTab(false);
       setNewTabName('');
       setNewTabNotes('');
@@ -255,13 +285,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setShowPickTab(false);
     try {
       let currentTab: Tab | undefined;
-      for (const { product, quantity } of cart) {
-        currentTab = await tabsApi.addItem(tabId, product.id, quantity);
+      for (const { product, quantity, note } of cart) {
+        currentTab = await tabsApi.addItem(tabId, product.id, quantity, note);
       }
       if (currentTab) updateTab(currentTab);
       setSelectedId(tabId);
       setView('detail');
       setCart([]);
+      setHighlightedKey(null);
     } catch (e) {
       alert((e as Error).message);
     }
@@ -364,6 +395,58 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   // ── product grid (shared between cart mode and tab mode) ──────
   const isCartMode = !selectedTab;
 
+  function renderCartDetail() {
+    return (
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginBottom: 8 }}>
+        {cart.map(item => {
+          const isHighlighted = item._key === highlightedKey;
+          return (
+            <div
+              key={item._key}
+              onClick={() => setHighlightedKey(item._key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px',
+                borderRadius: 6, cursor: 'pointer',
+                background: isHighlighted ? 'var(--border, #e2e8f0)' : 'transparent',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.product.name}</div>
+                {item.note && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{item.note}</div>}
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{formatMoney(item.product.price_cents * item.quantity)}</span>
+              <button
+                className="btn btn--ghost btn--icon"
+                style={{ minWidth: 28, minHeight: 28, fontSize: 15, flexShrink: 0 }}
+                onMouseDown={e => e.preventDefault()}
+                onClick={e => {
+                  e.stopPropagation();
+                  setCart(prev => {
+                    const entry = prev.find(c => c._key === item._key);
+                    if (!entry) return prev;
+                    return entry.quantity <= 1
+                      ? prev.filter(c => c._key !== item._key)
+                      : prev.map(c => c._key === item._key ? { ...c, quantity: c.quantity - 1 } : c);
+                  });
+                }}
+              >−</button>
+              <span style={{ fontSize: 13, fontWeight: 600, minWidth: 16, textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
+              <button
+                className="btn btn--ghost btn--icon"
+                style={{ minWidth: 28, minHeight: 28, fontSize: 15, flexShrink: 0 }}
+                onMouseDown={e => e.preventDefault()}
+                onClick={e => {
+                  e.stopPropagation();
+                  setCart(prev => prev.map(c => c._key === item._key ? { ...c, quantity: c.quantity + 1 } : c));
+                }}
+              >+</button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderProductGrid() {
     const query = productSearch.trim().toLowerCase();
     const visibleProducts = query
@@ -389,6 +472,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             <span className={`product-card__badge${stagedQty === 0 ? ' product-card__badge--committed' : ''}`}>
               {stagedQty > 0 && committedQty > 0 ? `${committedQty}+${stagedQty}` : totalQty}
             </span>
+          )}
+          {cart.some(c => c.product.id === p.id && !!c.note) && (
+            <span className="product-card__note-icon">📝</span>
           )}
           <div className="product-card__name">{p.name}</div>
           <div className="product-card__price">{formatMoney(p.price_cents)}</div>
@@ -517,10 +603,24 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               <div className="cart-bar--empty">nothing selected yet</div>
             ) : (
               <>
-                <div className="cart-bar__row">
+                <div className="cart-bar__row" style={{ cursor: 'pointer' }} onClick={() => setCartExpanded(e => !e)}>
                   <span className="cart-bar__label">{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
                   <span className="cart-bar__total">{formatMoney(cartTotal)}</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{cartExpanded ? '▲' : '▼'}</span>
                 </div>
+                {cartExpanded && renderCartDetail()}
+                {highlightedKey !== null && (
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    style={{ width: '100%', marginBottom: 8 }}
+                    onClick={() => {
+                      const entry = cart.find(c => c._key === highlightedKey);
+                      setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
+                    }}
+                  >
+                    + note
+                  </button>
+                )}
                 <div className="cart-bar__actions">
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={openDirectPay}>
                     Pay now
@@ -669,6 +769,18 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     {cartCount > 0 && `${cartCount} new`}{cartCount > 0 && hasOverrides && ' · '}{hasOverrides && 'qty changes'}
                   </span>
                   {cartCount > 0 && <span className="cart-bar__total">{formatMoney(cartTotal)}</span>}
+                  {cartCount > 0 && highlightedKey !== null && (
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      style={{ fontSize: 12 }}
+                      onClick={() => {
+                        const entry = cart.find(c => c._key === highlightedKey);
+                        setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
+                      }}
+                    >
+                      + note
+                    </button>
+                  )}
                 </div>
                 <div className="cart-bar__actions">
                   <button className="btn btn--ghost" onClick={() => { setCart([]); setItemQtyOverrides({}); }}>Discard</button>
@@ -733,10 +845,24 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               <div className="cart-bar--empty">tap products to stage an order</div>
             ) : (
               <>
-                <div className="cart-bar__row">
+                <div className="cart-bar__row" style={{ cursor: 'pointer' }} onClick={() => setCartExpanded(e => !e)}>
                   <span className="cart-bar__label">{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
                   <span className="cart-bar__total">{formatMoney(cartTotal)}</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{cartExpanded ? '▲' : '▼'}</span>
                 </div>
+                {cartExpanded && renderCartDetail()}
+                {highlightedKey !== null && (
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    style={{ width: '100%', marginBottom: 8 }}
+                    onClick={() => {
+                      const entry = cart.find(c => c._key === highlightedKey);
+                      setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
+                    }}
+                  >
+                    + note
+                  </button>
+                )}
                 <div className="cart-bar__actions">
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
                 </div>
@@ -1289,6 +1415,42 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     </span>
                   </button>
                 ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add note modal ──────────────────────────────────── */}
+      {noteModal && (
+        <div className="modal-overlay" onClick={() => setNoteModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal__header">
+              <h2 className="modal__title">Note — {noteModal.productName}</h2>
+              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setNoteModal(null)}>✕</button>
+            </div>
+            <div className="modal__body">
+              <input
+                className="field__input"
+                placeholder="e.g. no coriander, extra spicy…"
+                value={noteModal.input}
+                autoFocus
+                onChange={e => setNoteModal(prev => prev ? { ...prev, input: e.target.value } : null)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && noteModal.input.trim()) handleAddNote(noteModal.input.trim());
+                  if (e.key === 'Escape') setNoteModal(null);
+                }}
+              />
+            </div>
+            <div className="modal__footer" style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn--ghost" onClick={() => setNoteModal(null)}>Cancel</button>
+              <button
+                className="btn btn--primary"
+                style={{ flex: 1 }}
+                disabled={!noteModal.input.trim()}
+                onClick={() => handleAddNote(noteModal.input.trim())}
+              >
+                Add note
+              </button>
             </div>
           </div>
         </div>
