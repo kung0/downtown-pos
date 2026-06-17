@@ -65,6 +65,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [tabsPanelOpen, setTabsPanelOpen] = useState(() => window.innerWidth >= 768);
   const [showSplit, setShowSplit] = useState(false);
   const [splitQtys, setSplitQtys] = useState<Record<number, number>>({});
+  const [splitBilliardInputs, setSplitBilliardInputs] = useState<Record<number, string>>({});
   const [splitPayMethod, setSplitPayMethod] = useState<'cash' | 'card'>('cash');
   const [splitTipInput, setSplitTipInput] = useState('');
   const [splitting, setSplitting] = useState(false);
@@ -115,7 +116,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     return subscribe((msg: WSMessage) => {
       if (msg.type === 'tab:updated') {
         const tab = msg.data as Tab;
-        setTabs(prev => prev.map(t => t.id === tab.id ? tab : t));
+        setTabs(prev => {
+          const exists = prev.some(t => t.id === tab.id);
+          if (exists) return prev.map(t => t.id === tab.id ? tab : t);
+          return tab.status === 'open' ? [...prev, tab] : prev;
+        });
       } else if (msg.type === 'tab:opened') {
         setTabs(prev => [...prev, msg.data as Tab]);
       } else if (msg.type === 'tab:closed' || msg.type === 'tab:voided' || msg.type === 'tab:deleted') {
@@ -292,6 +297,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   // ── split payment ────────────────────────────────────────────
   function openSplitModal() {
     setSplitQtys({});
+    setSplitBilliardInputs({});
     setSplitPayMethod('cash');
     setSplitTipInput('');
     setShowSplit(true);
@@ -306,9 +312,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   async function handleSplitPay() {
     if (!selectedId || splitting) return;
-    const items = (selectedTab?.items ?? [])
-      .filter(i => i.kind === 'product' && (splitQtys[i.id] ?? 0) > 0)
-      .map(i => ({ id: i.id, quantity: splitQtys[i.id] }));
+    const items = (selectedTab?.items ?? []).flatMap(i => {
+      if (i.kind === 'billiard') {
+        const amount = Math.min(i.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[i.id] ?? '')));
+        return amount > 0 ? [{ id: i.id, quantity: 1, amount_cents: amount }] : [];
+      }
+      const qty = splitQtys[i.id] ?? 0;
+      return qty > 0 ? [{ id: i.id, quantity: qty }] : [];
+    });
     if (items.length === 0) return;
     const tipCents = parseMoney(splitTipInput);
 
@@ -615,6 +626,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     {item.kind === 'billiard' && item.session_started_at && item.session_ended_at && (
                       <div className="line-item__note">
                         {formatTime(item.session_started_at)} – {formatTime(item.session_ended_at)} · {fmtDuration(item.session_started_at, item.session_ended_at)}
+                        {item.session_computed_cost_cents != null && item.price_snapshot_cents < item.session_computed_cost_cents && (
+                          <span style={{ marginLeft: 6, color: 'var(--warning, #f59e0b)' }}>
+                            · {formatMoney(item.session_computed_cost_cents - item.price_snapshot_cents)} bereits bezahlt
+                          </span>
+                        )}
                       </div>
                     )}
                     {item.note && <div className="line-item__note">{item.note}</div>}
@@ -864,17 +880,26 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
       {/* ── Split payment modal ────────────────────────────── */}
       {showSplit && selectedTab && (() => {
-        const productItems = (selectedTab.items ?? []).filter(i => i.kind === 'product');
-        const splitItemsForPay = productItems.filter(i => (splitQtys[i.id] ?? 0) > 0);
-        const splitSubtotal = productItems.reduce(
-          (s, i) => s + i.price_snapshot_cents * (splitQtys[i.id] ?? 0), 0
-        );
+        const allItems = selectedTab.items ?? [];
+        const getBilliardAmount = (item: typeof allItems[0]) =>
+          Math.min(item.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[item.id] ?? '')));
+        const getItemAmount = (item: typeof allItems[0]) =>
+          item.kind === 'billiard'
+            ? getBilliardAmount(item)
+            : item.price_snapshot_cents * (splitQtys[item.id] ?? 0);
+        const splitSubtotal = allItems.reduce((s, i) => s + getItemAmount(i), 0);
         const splitTip = parseMoney(splitTipInput);
         const { standard: splitTaxStd, reduced: splitTaxRed } = computeTax(
-          splitItemsForPay.map(i => ({ ...i, quantity: splitQtys[i.id] })) as any
+          allItems.filter(i => getItemAmount(i) > 0).map(i => ({
+            ...i, price_snapshot_cents: getItemAmount(i), quantity: 1,
+          }))
         );
         const splitTotal = splitSubtotal + splitTip;
-        const allMaxed = productItems.length > 0 && productItems.every(i => (splitQtys[i.id] ?? 0) >= i.quantity);
+        const allMaxed = allItems.length > 0 && allItems.every(i =>
+          i.kind === 'billiard'
+            ? getBilliardAmount(i) >= i.price_snapshot_cents
+            : (splitQtys[i.id] ?? 0) >= i.quantity
+        );
         return (
           <div className="modal-overlay" onClick={() => setShowSplit(false)}>
             <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
@@ -883,19 +908,22 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setShowSplit(false)}>✕</button>
               </div>
               <div className="modal__body" style={{ paddingBottom: 0 }}>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
-                  Set how many of each item this person is paying for.
-                </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
                   <button
                     className="btn btn--ghost btn--sm"
                     onClick={() => {
                       if (allMaxed) {
                         setSplitQtys({});
+                        setSplitBilliardInputs({});
                       } else {
-                        const all: Record<number, number> = {};
-                        productItems.forEach(i => { all[i.id] = i.quantity; });
-                        setSplitQtys(all);
+                        const qtys: Record<number, number> = {};
+                        const bill: Record<number, string> = {};
+                        allItems.forEach(i => {
+                          if (i.kind === 'billiard') bill[i.id] = (i.price_snapshot_cents / 100).toFixed(2).replace('.', ',');
+                          else qtys[i.id] = i.quantity;
+                        });
+                        setSplitQtys(qtys);
+                        setSplitBilliardInputs(bill);
                       }
                     }}
                   >
@@ -903,10 +931,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   </button>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
-                  {(selectedTab.items ?? []).map(item => {
-                    const isProduct = item.kind === 'product';
-                    const selectedQty = isProduct ? (splitQtys[item.id] ?? 0) : 0;
-                    const active = selectedQty > 0;
+                  {allItems.map(item => {
+                    const amount = getItemAmount(item);
+                    const active = amount > 0;
+                    const selectedQty = splitQtys[item.id] ?? 0;
+                    const itemName = item.kind === 'billiard' ? item.name_snapshot.split(' · ')[0] : item.name_snapshot;
+                    const subtext = item.kind === 'billiard' && item.session_started_at && item.session_ended_at
+                      ? `${formatTime(item.session_started_at)} – ${formatTime(item.session_ended_at)} · total ${formatMoney(item.price_snapshot_cents)}`
+                      : `${formatMoney(item.price_snapshot_cents)} each · ${item.quantity} on tab`;
                     return (
                       <div
                         key={item.id}
@@ -916,19 +948,23 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                           background: active ? 'var(--accent-subtle, rgba(99,102,241,.08))' : 'transparent',
                           border: '1px solid',
                           borderColor: active ? 'var(--accent, #6366f1)' : 'var(--border, #e2e8f0)',
-                          opacity: isProduct ? 1 : 0.45,
                         }}
                       >
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14 }}>
-                            {item.kind === 'billiard' ? item.name_snapshot.split(' · ')[0] : item.name_snapshot}
-                            {!isProduct && <span style={{ fontSize: 11, marginLeft: 6, color: 'var(--text-muted)' }}>(billed separately)</span>}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                            {formatMoney(item.price_snapshot_cents)} each · {item.quantity} on tab
-                          </div>
+                          <div style={{ fontSize: 14 }}>{itemName}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subtext}</div>
                         </div>
-                        {isProduct ? (
+                        {item.kind === 'billiard' ? (
+                          <div className="price-input" style={{ width: 96, flexShrink: 0 }}>
+                            <span className="price-input__prefix">€</span>
+                            <input
+                              className="field__input"
+                              placeholder="0,00"
+                              value={splitBilliardInputs[item.id] ?? ''}
+                              onChange={e => setSplitBilliardInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            />
+                          </div>
+                        ) : (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                             <button
                               type="button"
@@ -948,21 +984,10 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                               disabled={selectedQty >= item.quantity}
                             >+</button>
                           </div>
-                        ) : (
-                          <span style={{ fontSize: 14, fontWeight: 500, flexShrink: 0 }}>
-                            {formatMoney(item.price_snapshot_cents * item.quantity)}
-                          </span>
                         )}
-                        {isProduct && selectedQty > 0 && (
-                          <span style={{ fontSize: 14, fontWeight: 500, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
-                            {formatMoney(item.price_snapshot_cents * selectedQty)}
-                          </span>
-                        )}
-                        {isProduct && selectedQty === 0 && (
-                          <span style={{ fontSize: 14, color: 'var(--text-muted)', flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
-                            —
-                          </span>
-                        )}
+                        <span style={{ fontSize: 14, fontWeight: active ? 500 : 400, color: active ? 'inherit' : 'var(--text-muted)', flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
+                          {active ? formatMoney(amount) : '—'}
+                        </span>
                       </div>
                     );
                   })}

@@ -395,10 +395,6 @@ select.field__input { cursor: pointer; }
   color: var(--text-muted);
 }
 
-.tabs-panel--collapsed .tabs-panel__search,
-.tabs-panel--collapsed .tabs-panel__list {
-  display: none;
-}
 
 .tabs-panel__search {
   padding: 8px 10px;
@@ -1188,6 +1184,8 @@ select.field__input { cursor: pointer; }
 
   .tabs-panel__toggle { display: inline; }
   .tabs-panel__header { cursor: pointer; }
+  .tabs-panel--collapsed .tabs-panel__search,
+  .tabs-panel--collapsed .tabs-panel__list { display: none; }
 }
 
 /* ── Product grid parent/child labels ── */

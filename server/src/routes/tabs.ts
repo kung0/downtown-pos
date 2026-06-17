@@ -33,14 +33,28 @@ router.get('/', (_req: Request, res: Response) => {
   if (tabRows.length === 0) return void res.json([]);
 
   const ids = tabRows.map((t: any) => t.id);
+  const ph = ids.map(() => '?').join(',');
   const allItems = db.prepare(
-    `SELECT * FROM line_items WHERE tab_id IN (${ids.map(() => '?').join(',')}) ORDER BY created_at ASC`
+    `SELECT li.*, bs.started_at AS session_started_at, bs.ended_at AS session_ended_at,
+            bs.computed_cost_cents AS session_computed_cost_cents
+     FROM line_items li
+     LEFT JOIN billiard_sessions bs ON bs.line_item_id = li.id
+     WHERE li.tab_id IN (${ph})
+     ORDER BY li.created_at ASC`
+  ).all(...ids) as any[];
+
+  const allSessions = db.prepare(
+    `SELECT bs.*, pt.label AS table_label, pt.type AS table_type
+     FROM billiard_sessions bs
+     JOIN pool_tables pt ON pt.id = bs.pool_table_id
+     WHERE bs.tab_id IN (${ph}) AND bs.ended_at IS NULL`
   ).all(...ids) as any[];
 
   const tabs = tabRows.map((row: any) => {
     const items = allItems.filter((i: any) => i.tab_id === row.id);
+    const active_sessions = allSessions.filter((s: any) => s.tab_id === row.id);
     const running_total_cents = items.reduce((sum: number, i: any) => sum + i.price_snapshot_cents * i.quantity, 0);
-    return { ...row, items, running_total_cents };
+    return { ...row, items, active_sessions, running_total_cents };
   });
 
   res.json(tabs);
@@ -305,8 +319,10 @@ router.delete('/:id', (req: Request, res: Response) => {
   res.json({ id: tabId });
 });
 
-// POST /api/tabs/:id/split-pay — pay selected items (with qty), leave rest on tab
-// body: { items: Array<{ id: number, quantity: number }>, payment_method, tip_cents }
+// POST /api/tabs/:id/split-pay — pay selected items, leave rest on tab
+// items: Array<{ id, quantity, amount_cents? }>
+//   product items  → split by quantity
+//   billiard items → split by amount_cents (e.g. pay 6 € of a 12 € session)
 router.post('/:id/split-pay', async (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
   const { items: splitItems, payment_method, tip_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
@@ -324,7 +340,7 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
   const sessionId = getActiveSessionId();
   if (!sessionId) return void res.status(403).json({ error: 'no shift is open' });
 
-  const itemIds = (splitItems as Array<{ id: number; quantity: number }>).map(i => i.id);
+  const itemIds = (splitItems as Array<{ id: number; quantity: number; amount_cents?: number }>).map(i => i.id);
   const placeholders = itemIds.map(() => '?').join(',');
   const dbItems = db.prepare(
     `SELECT * FROM line_items WHERE id IN (${placeholders}) AND tab_id = ?`
@@ -333,20 +349,31 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
   if (dbItems.length !== itemIds.length) {
     return void res.status(400).json({ error: 'some item ids are invalid or do not belong to this tab' });
   }
-  if (dbItems.some((i: any) => i.kind === 'billiard')) {
-    return void res.status(400).json({ error: 'billiard items cannot be split off — stop the table first' });
-  }
 
-  // Build split qty map and validate quantities
-  const splitQtyMap = new Map<number, number>(
-    (splitItems as Array<{ id: number; quantity: number }>).map(i => [i.id, i.quantity])
-  );
-  for (const dbItem of dbItems) {
-    const qty = splitQtyMap.get(dbItem.id) ?? 0;
-    if (!Number.isInteger(qty) || qty < 1 || qty > dbItem.quantity) {
-      return void res.status(400).json({
-        error: `invalid quantity ${qty} for item ${dbItem.id} (max ${dbItem.quantity})`,
-      });
+  // Build pay-amount map: item id → cents being paid now
+  const payAmounts = new Map<number, number>();
+  const payQtys = new Map<number, number>();
+
+  for (const reqItem of splitItems as Array<{ id: number; quantity: number; amount_cents?: number }>) {
+    const dbItem = dbItems.find((i: any) => i.id === reqItem.id);
+    if (!dbItem) continue;
+    if (dbItem.kind === 'billiard') {
+      const amount = Math.floor(Number(reqItem.amount_cents ?? 0));
+      if (amount < 1 || amount > dbItem.price_snapshot_cents) {
+        return void res.status(400).json({
+          error: `invalid amount_cents ${amount} for billiard item ${dbItem.id} (max ${dbItem.price_snapshot_cents})`,
+        });
+      }
+      payAmounts.set(dbItem.id, amount);
+    } else {
+      const qty = reqItem.quantity;
+      if (!Number.isInteger(qty) || qty < 1 || qty > dbItem.quantity) {
+        return void res.status(400).json({
+          error: `invalid quantity ${qty} for item ${dbItem.id} (max ${dbItem.quantity})`,
+        });
+      }
+      payAmounts.set(dbItem.id, dbItem.price_snapshot_cents * qty);
+      payQtys.set(dbItem.id, qty);
     }
   }
 
@@ -356,9 +383,9 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit',
   });
 
-  const tax = computeTaxBreakdown(dbItems.map(dbItem => ({
-    price_snapshot_cents: dbItem.price_snapshot_cents,
-    quantity: splitQtyMap.get(dbItem.id)!,
+  const tax = computeTaxBreakdown(dbItems.map((dbItem: any) => ({
+    price_snapshot_cents: payAmounts.get(dbItem.id)!,
+    quantity: 1,
     tax_category_snapshot: dbItem.tax_category_snapshot,
   })));
   const total = tax.subtotal_cents + tip;
@@ -381,12 +408,12 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     logEvent('tab_opened', splitTabId, { customer_name: splitName });
 
     for (const dbItem of dbItems) {
-      const qty = splitQtyMap.get(dbItem.id)!;
+      const paidAmount = payAmounts.get(dbItem.id)!;
       db.prepare(`
         INSERT INTO line_items (tab_id, product_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'product', ?)
-      `).run(splitTabId, dbItem.product_id, dbItem.name_snapshot, dbItem.price_snapshot_cents,
-         dbItem.tax_category_snapshot, qty, dbItem.note, now);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(splitTabId, dbItem.product_id, dbItem.name_snapshot, paidAmount,
+         dbItem.tax_category_snapshot, 1, dbItem.note, dbItem.kind, now);
     }
 
     writeClose(splitTabId, {
@@ -401,11 +428,24 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
 
     // Reduce or remove items from the original tab
     for (const dbItem of dbItems) {
-      const qty = splitQtyMap.get(dbItem.id)!;
-      if (qty >= dbItem.quantity) {
-        db.prepare('DELETE FROM line_items WHERE id = ?').run(dbItem.id);
+      if (dbItem.kind === 'billiard') {
+        const paidAmount = payAmounts.get(dbItem.id)!;
+        const remaining = dbItem.price_snapshot_cents - paidAmount;
+        if (remaining <= 0) {
+          // Full billiard paid — unlink session and delete item
+          db.prepare('UPDATE billiard_sessions SET line_item_id = NULL WHERE line_item_id = ?').run(dbItem.id);
+          db.prepare('DELETE FROM line_items WHERE id = ?').run(dbItem.id);
+        } else {
+          // Partial — reduce the price on the original item
+          db.prepare('UPDATE line_items SET price_snapshot_cents = ? WHERE id = ?').run(remaining, dbItem.id);
+        }
       } else {
-        db.prepare('UPDATE line_items SET quantity = quantity - ? WHERE id = ?').run(qty, dbItem.id);
+        const qty = payQtys.get(dbItem.id)!;
+        if (qty >= dbItem.quantity) {
+          db.prepare('DELETE FROM line_items WHERE id = ?').run(dbItem.id);
+        } else {
+          db.prepare('UPDATE line_items SET quantity = quantity - ? WHERE id = ?').run(qty, dbItem.id);
+        }
       }
     }
     logEvent('split_paid', tabId, { split_tab_id: splitTabId, payment_method, total });
