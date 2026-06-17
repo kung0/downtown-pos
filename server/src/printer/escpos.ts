@@ -71,7 +71,7 @@ export function buildReceipt(tab: Tab): Buffer {
 
   // ── header ───────────────────────────────────────────────────
   p.push(ALIGN_CENTER, BOLD_ON, DBL_HEIGHT_ON);
-  p.push(line('downtown'));
+  p.push(line('Downtown Darmstadt'));
   p.push(DBL_HEIGHT_OFF, BOLD_OFF);
   p.push(line('Cafe - Bar - Restaurant - Billard'));
   p.push(line('Grafenstraße 20 \xB7 64283 Darmstadt')); // · = 0xB7 in CP1252

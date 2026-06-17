@@ -7,10 +7,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "rootDir": "..",
-    "paths": {
-      "@downtown/shared": ["../shared/types"]
-    }
+    "rootDir": "src"
   },
   "include": ["src/**/*"]
 }

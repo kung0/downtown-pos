@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
+import path from 'path';
 import cors from 'cors';
 import { initSchema } from './db/schema';
 import { seedIfEmpty } from './db/seed';
@@ -32,6 +33,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const clientDist = path.resolve(__dirname, '../../client/dist');
+app.use(express.static(clientDist));
+
 app.use('/api/health', healthRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/tabs', tabsRouter);
@@ -42,6 +46,10 @@ app.use('/api/waitlist', waitlistRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/printer', printerRouter);
+
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 app.use(errorHandler);
 
