@@ -63,7 +63,17 @@ function berlinDT(iso: string): string {
   });
 }
 
-export function buildReceipt(tab: Tab): Buffer {
+function berlinDate(iso: string): string {
+  return new Date(iso).toLocaleString('de-DE', {
+    timeZone: 'Europe/Berlin',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  });
+}
+
+// A full-width line to write on by hand.
+const FILL = '_'.repeat(W_A);
+
+export function buildReceipt(tab: Tab, opts: { bewirtung?: boolean } = {}): Buffer {
   const p: Buffer[] = [];
 
   // ── init ─────────────────────────────────────────────────────
@@ -161,7 +171,81 @@ export function buildReceipt(tab: Tab): Buffer {
   // ── footer ───────────────────────────────────────────────────
   p.push(ALIGN_CENTER);
   p.push(line('Vielen Dank f\xFCr Ihren Besuch!')); // ü = 0xFC
+
+  // ── Bewirtungsbeleg ──────────────────────────────────────────
+  // Printed directly below the receipt on the same slip; a single cut closes
+  // the whole job so receipt + Bewirtungsbeleg come out as one paper.
+  if (opts.bewirtung) {
+    p.push(buildBewirtungsbeleg(tab));
+  }
+
   p.push(LF, FEED_CUT);
+
+  return Buffer.concat(p);
+}
+
+// Supplemental entertainment-expense section (§ 4 Abs. 5 Satz 1 Nr. 2 EStG,
+// BMF-Schreiben v. 30.06.2021). Printed below the receipt on the same slip.
+// The machine receipt above already documents venue, date, itemised costs and
+// total (and, in Phase 2, the TSE signature). The data the tax office requires
+// that a register cannot supply — Anlass der Bewirtung, Teilnehmer and the
+// host's signature — are emitted as blank fill-in lines to complete by hand.
+function buildBewirtungsbeleg(tab: Tab): Buffer {
+  const p: Buffer[] = [];
+
+  // Separator from the receipt above (no cut — same paper).
+  p.push(ALIGN_LEFT, LF);
+  p.push(line('\xBB'.repeat(W_A))); // » row as a visible tear/fold guide
+
+  // ── header ───────────────────────────────────────────────────
+  p.push(ALIGN_CENTER, BOLD_ON, DBL_HEIGHT_ON);
+  p.push(line('BEWIRTUNGSBELEG'));
+  p.push(DBL_HEIGHT_OFF);
+  p.push(line('Bewirtung aus gesch\xE4ftlichem Anlass')); // ä = 0xE4
+  p.push(BOLD_OFF, LF, ALIGN_LEFT);
+
+  // ── Ort und Tag der Bewirtung ────────────────────────────────
+  p.push(line('Ort der Bewirtung:'));
+  p.push(line('Downtown, Grafenstra\xDFe 20, 64283 Darmstadt')); // ß = 0xDF
+  if (tab.closed_at) {
+    p.push(col('Tag der Bewirtung:', berlinDate(tab.closed_at)));
+  }
+  p.push(divider('-'));
+
+  // ── Höhe der Aufwendungen ────────────────────────────────────
+  const tip = tab.tip_cents ?? 0;
+  const total = tab.total_cents ?? 0;
+  p.push(col('Bewirtungskosten lt. Rechnung', euro(total - tip)));
+  // Tip is captured digitally when paid by card; for cash it may be added by
+  // hand, so leave a writable line when we have no recorded amount.
+  p.push(tip > 0 ? col('Trinkgeld', euro(tip)) : col('Trinkgeld', '________'));
+  p.push(BOLD_ON, col('Gesamtbetrag', euro(total)), BOLD_OFF);
+  p.push(divider('-'));
+
+  // ── Anlass der Bewirtung ─────────────────────────────────────
+  p.push(line('Anlass der Bewirtung:'));
+  p.push(line(FILL));
+  p.push(line(FILL));
+
+  // ── Bewirtete Personen (inkl. Gastgeber) ─────────────────────
+  p.push(LF, line('Bewirtete Personen (Name):'));
+  p.push(line(FILL));
+  p.push(line(FILL));
+  p.push(line(FILL));
+
+  p.push(LF, line('Bewirtende Person / Gastgeber:'));
+  p.push(line(FILL));
+
+  // ── Unterschrift ─────────────────────────────────────────────
+  p.push(LF, LF, line(FILL));
+  p.push(FONT_B, line('Ort, Datum, Unterschrift Bewirtende(r)'), FONT_A);
+
+  // ── Hinweis ──────────────────────────────────────────────────
+  p.push(divider('-'));
+  p.push(FONT_B);
+  p.push(line('Angaben gem. \xA7 4 Abs. 5 Satz 1 Nr. 2 EStG.')); // § = 0xA7
+  p.push(line('Gesch\xE4ftliche Bewirtung: 70% abziehbar.'));
+  p.push(FONT_A);
 
   return Buffer.concat(p);
 }

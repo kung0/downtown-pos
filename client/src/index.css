@@ -1128,6 +1128,55 @@ select.field__input { cursor: pointer; }
   line-height: 1.4;
 }
 
+/* ── Bewirtungsbeleg ── */
+.bewirtung-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bewirtung-toggle input { width: 16px; height: 16px; cursor: pointer; }
+.bewirtung {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.bewirtung__title { font-size: 15px; font-weight: 700; }
+.bewirtung__sub { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+.bewirtung__line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.bewirtung__line span:last-child { color: var(--text-muted); text-align: right; }
+.bewirtung__fill {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bewirtung__fill span { display: block; margin-bottom: 4px; }
+.bewirtung__fill::after {
+  content: '';
+  display: block;
+  border-bottom: 1px solid var(--text-muted);
+  opacity: 0.5;
+}
+.bewirtung__note {
+  margin-top: 14px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 /* ── Settings page ── */
 .settings-body { display: flex; flex-direction: column; gap: 24px; max-width: 480px; }
 .settings-section {

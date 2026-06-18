@@ -43,8 +43,10 @@ router.post('/receipt/:tabId', async (req: Request, res: Response) => {
   if (!tab) return void res.status(404).json({ error: 'tab not found' });
   if (tab.status === 'open') return void res.status(400).json({ error: 'tab is still open' });
 
+  const bewirtung = req.body?.bewirtung === true;
+
   try {
-    await sendToPrinter(ip, buildReceipt(tab));
+    await sendToPrinter(ip, buildReceipt(tab, { bewirtung }));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(502).json({ error: e.message });

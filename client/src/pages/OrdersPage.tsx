@@ -56,6 +56,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [receipt, setReceipt]           = useState<import('@downtown/shared').Tab | null>(null);
   const [printing, setPrinting]         = useState(false);
   const [printMsg, setPrintMsg]         = useState('');
+  const [bewirtung, setBewirtung]       = useState(false);
   const [showDirectPay, setShowDirectPay] = useState(false);
   const [directPayMethod, setDirectPayMethod] = useState<'cash' | 'card'>('cash');
   const [directPayTip, setDirectPayTip]   = useState('');
@@ -1267,11 +1268,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
       {/* ── Receipt modal ───────────────────────────────────── */}
       {receipt && (
-        <div className="modal-overlay" onClick={() => setReceipt(null)}>
+        <div className="modal-overlay" onClick={() => { setReceipt(null); setBewirtung(false); }}>
           <div className="modal modal--receipt" onClick={e => e.stopPropagation()}>
             <div className="modal__header">
               <h2 className="modal__title">Receipt</h2>
-              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setReceipt(null)}>✕</button>
+              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => { setReceipt(null); setBewirtung(false); }}>✕</button>
             </div>
             <div className="modal__body">
               <div className="receipt-name">{receipt.customer_name}</div>
@@ -1353,6 +1354,56 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   </div>
                 </div>
               )}
+
+              <label className="bewirtung-toggle">
+                <input
+                  type="checkbox"
+                  checked={bewirtung}
+                  onChange={e => setBewirtung(e.target.checked)}
+                />
+                <span>Bewirtungsbeleg anhängen</span>
+              </label>
+
+              {bewirtung && (
+                <div className="bewirtung">
+                  <div className="bewirtung__title">Bewirtungsbeleg</div>
+                  <div className="bewirtung__sub">Bewirtung aus geschäftlichem Anlass</div>
+
+                  <div className="bewirtung__line">
+                    <span>Ort der Bewirtung</span>
+                    <span>Downtown, Grafenstraße 20, Darmstadt</span>
+                  </div>
+                  <div className="bewirtung__line">
+                    <span>Tag der Bewirtung</span>
+                    <span>{formatDateTime(receipt.closed_at!)}</span>
+                  </div>
+
+                  <div className="pay-summary" style={{ marginTop: 8, paddingTop: 8 }}>
+                    <div className="pay-summary__row">
+                      <span>Bewirtungskosten lt. Rechnung</span>
+                      <span>{formatMoney((receipt.total_cents ?? 0) - (receipt.tip_cents ?? 0))}</span>
+                    </div>
+                    <div className="pay-summary__row pay-summary__row--muted">
+                      <span>Trinkgeld</span>
+                      <span>{(receipt.tip_cents ?? 0) > 0 ? formatMoney(receipt.tip_cents) : '—'}</span>
+                    </div>
+                    <div className="pay-summary__row pay-summary__row--total" style={{ fontSize: 14 }}>
+                      <span>Gesamtbetrag</span>
+                      <span>{formatMoney(receipt.total_cents ?? 0)}</span>
+                    </div>
+                  </div>
+
+                  <div className="bewirtung__fill"><span>Anlass der Bewirtung</span></div>
+                  <div className="bewirtung__fill"><span>Bewirtete Personen (inkl. Gastgeber)</span></div>
+                  <div className="bewirtung__fill"><span>Ort, Datum, Unterschrift</span></div>
+
+                  <div className="bewirtung__note">
+                    Felder für Anlass, Teilnehmer und Unterschrift werden beim Druck
+                    als Linien zum handschriftlichen Ausfüllen ergänzt. Angaben gem.
+                    § 4 Abs. 5 Satz 1 Nr. 2 EStG · geschäftliche Bewirtung 70 % abziehbar.
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal__footer">
               <button
@@ -1362,7 +1413,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   setPrinting(true);
                   setPrintMsg('');
                   try {
-                    await printerApi.printReceipt(receipt.id);
+                    await printerApi.printReceipt(receipt.id, { bewirtung });
                     setPrintMsg('Sent!');
                   } catch (e) {
                     setPrintMsg((e as Error).message);
@@ -1372,14 +1423,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   }
                 }}
               >
-                {printing ? 'Printing…' : 'Print'}
+                {printing ? 'Printing…' : (bewirtung ? 'Print + Bewirtung' : 'Print')}
               </button>
               {printMsg && (
                 <span style={{ fontSize: 13, color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)', alignSelf: 'center' }}>
                   {printMsg}
                 </span>
               )}
-              <button className="btn btn--primary" style={{ flex: 1 }} onClick={() => { setReceipt(null); setPrintMsg(''); }}>
+              <button className="btn btn--primary" style={{ flex: 1 }} onClick={() => { setReceipt(null); setPrintMsg(''); setBewirtung(false); }}>
                 Done
               </button>
             </div>

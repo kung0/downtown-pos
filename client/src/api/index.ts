@@ -122,5 +122,6 @@ export const settingsApi = {
 export const printerApi = {
   status: () => req<{ configured: boolean; ip?: string; online: boolean }>('/printer/status'),
   test: () => req<{ ok: boolean }>('/printer/test', { method: 'POST' }),
-  printReceipt: (tabId: number) => req<{ ok: boolean }>(`/printer/receipt/${tabId}`, { method: 'POST' }),
+  printReceipt: (tabId: number, opts?: { bewirtung?: boolean }) =>
+    req<{ ok: boolean }>(`/printer/receipt/${tabId}`, { method: 'POST', body: JSON.stringify(opts ?? {}) }),
 };
