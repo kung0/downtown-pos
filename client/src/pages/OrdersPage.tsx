@@ -74,6 +74,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [highlightedKey, setHighlightedKey] = useState<number | null>(null);
   const [noteModal, setNoteModal] = useState<{ productName: string; input: string } | null>(null);
   const [cartExpanded, setCartExpanded] = useState(false);
+  const [printOrders, setPrintOrders] = useState(() => localStorage.getItem('printOrders') !== '0');
+  const [printError, setPrintError] = useState<{ customerName: string; message: string } | null>(null);
 
   const newTabInputRef = useRef<HTMLInputElement>(null);
   const productSearchRef = useRef<HTMLInputElement>(null);
@@ -124,6 +126,41 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setHighlightedKey(k);
     }
     setNoteModal(null);
+  }
+
+  // ── order ticket printing ─────────────────────────────────────
+  type OrderLine = { name: string; quantity: number; note?: string | null };
+  const cartOrderLines = (): OrderLine[] =>
+    cart.map(c => ({ name: c.product.name, quantity: c.quantity, note: c.note ?? null }));
+
+  function togglePrintOrders(v: boolean) {
+    setPrintOrders(v);
+    localStorage.setItem('printOrders', v ? '1' : '0');
+  }
+
+  // Fire-and-forget: the order ticket is a side effect; a missing/offline
+  // printer must never block sending the order.
+  function firePrintOrder(customerName: string, lines: OrderLine[]) {
+    if (!printOrders || lines.length === 0) return;
+    printerApi.printOrder(customerName, lines).catch(e => {
+      const message = (e as Error).message;
+      console.error('[printer] order print failed:', message);
+      setPrintError({ customerName, message });
+    });
+  }
+
+  function renderPrintToggle() {
+    return (
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', marginBottom: 6 }}>
+        <input
+          type="checkbox"
+          checked={!printOrders}
+          onChange={e => togglePrintOrders(!e.target.checked)}
+          style={{ width: 15, height: 15, cursor: 'pointer' }}
+        />
+        <span>Don't print ticket</span>
+      </label>
+    );
   }
 
   // ── data loading ──────────────────────────────────────────────
@@ -196,6 +233,17 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     if (!selectedId) return;
     const hasOverrides = (selectedTab?.items ?? []).some(i => (itemQtyOverrides[i.id] ?? i.quantity) !== i.quantity);
     if (cartCount === 0 && !hasOverrides) return;
+
+    // Capture what's being added for the order ticket (new items + qty bumps).
+    const customerName = selectedTab?.customer_name ?? '';
+    const orderLines: OrderLine[] = cartOrderLines();
+    for (const item of (selectedTab?.items ?? [])) {
+      const staged = itemQtyOverrides[item.id];
+      if (staged !== undefined && staged > item.quantity) {
+        orderLines.push({ name: item.name_snapshot, quantity: staged - item.quantity, note: item.note });
+      }
+    }
+
     try {
       let updated: Tab | undefined;
       for (const { product, quantity, note } of cart) {
@@ -214,6 +262,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         }
       }
       if (updated) updateTab(updated);
+      firePrintOrder(customerName, orderLines);
       setCart([]);
       setItemQtyOverrides({});
       setHighlightedKey(null);
@@ -235,10 +284,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     if (directPaying || cartCount === 0) return;
     const tipCents = parseMoney(directPayTip);
     const items    = cart.map(c => ({ product_id: c.product.id, quantity: c.quantity }));
+    const orderLines = cartOrderLines();
 
     setDirectPaying(true);
     try {
       const closed = await tabsApi.quickPay(items, directPayMethod, tipCents);
+      firePrintOrder(closed.customer_name, orderLines);
       setCart([]);
       setShowDirectPay(false);
       setReceipt(closed);
@@ -257,12 +308,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   async function handleCreateTab() {
     if (!newTabName.trim() || creating) return;
+    const orderLines = cartOrderLines();
     setCreating(true);
     try {
       let currentTab = await tabsApi.create(newTabName.trim(), newTabNotes.trim() || undefined);
       for (const { product, quantity, note } of cart) {
         currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity, note);
       }
+      firePrintOrder(currentTab.customer_name, orderLines);
       setTabs(prev => {
         const exists = prev.find(t => t.id === currentTab.id);
         return exists ? prev.map(t => t.id === currentTab.id ? currentTab : t) : [...prev, currentTab];
@@ -284,12 +337,16 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   // ── cart → existing tab ──────────────────────────────────────
   async function handleAddCartToTab(tabId: number) {
     setShowPickTab(false);
+    const orderLines = cartOrderLines();
     try {
       let currentTab: Tab | undefined;
       for (const { product, quantity, note } of cart) {
         currentTab = await tabsApi.addItem(tabId, product.id, quantity, note);
       }
-      if (currentTab) updateTab(currentTab);
+      if (currentTab) {
+        updateTab(currentTab);
+        firePrintOrder(currentTab.customer_name, orderLines);
+      }
       setSelectedId(tabId);
       setView('detail');
       setCart([]);
@@ -622,6 +679,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     + note
                   </button>
                 )}
+                {renderPrintToggle()}
                 <div className="cart-bar__actions">
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={openDirectPay}>
                     Pay now
@@ -783,6 +841,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     </button>
                   )}
                 </div>
+                {renderPrintToggle()}
                 <div className="cart-bar__actions">
                   <button className="btn btn--ghost" onClick={() => { setCart([]); setItemQtyOverrides({}); }}>Discard</button>
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
@@ -864,6 +923,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     + note
                   </button>
                 )}
+                {renderPrintToggle()}
                 <div className="cart-bar__actions">
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
                 </div>
@@ -943,7 +1003,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   </div>
                 </div>
               </div>
-              <div className="modal__footer" style={{ display: 'flex', gap: 8 }}>
+              <div className="modal__footer" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {renderPrintToggle()}
                 <button className="btn btn--ghost" onClick={() => setShowDirectPay(false)}>Cancel</button>
                 <button className="btn btn--primary" onClick={handleDirectPay} disabled={directPaying} style={{ flex: 1 }}>
                   {directPaying ? 'Processing…' : `Confirm ${directPayMethod === 'cash' ? 'cash' : 'card'} — ${formatMoney(total)}`}
@@ -1501,6 +1562,35 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 onClick={() => handleAddNote(noteModal.input.trim())}
               >
                 Add note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Order print failed modal ─────────────────────────── */}
+      {printError && (
+        <div className="modal-overlay" onClick={() => setPrintError(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal__header">
+              <h2 className="modal__title">⚠ Ticket not printed</h2>
+              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setPrintError(null)}>✕</button>
+            </div>
+            <div className="modal__body">
+              <p style={{ fontSize: 14, marginBottom: 10 }}>
+                The order for <strong>{printError.customerName}</strong> was saved, but the kitchen
+                ticket could <strong>not</strong> be printed.
+              </p>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 10 }}>
+                Tell the kitchen/bar manually, then check the printer.
+              </p>
+              <div style={{ fontSize: 12, color: 'var(--danger, #e53e3e)', background: 'var(--surface-2, rgba(0,0,0,.04))', padding: '8px 10px', borderRadius: 6, fontFamily: 'monospace' }}>
+                {printError.message}
+              </div>
+            </div>
+            <div className="modal__footer">
+              <button className="btn btn--primary" style={{ flex: 1 }} onClick={() => setPrintError(null)}>
+                Got it
               </button>
             </div>
           </div>

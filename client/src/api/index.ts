@@ -124,4 +124,6 @@ export const printerApi = {
   test: () => req<{ ok: boolean }>('/printer/test', { method: 'POST' }),
   printReceipt: (tabId: number, opts?: { bewirtung?: boolean }) =>
     req<{ ok: boolean }>(`/printer/receipt/${tabId}`, { method: 'POST', body: JSON.stringify(opts ?? {}) }),
+  printOrder: (customer_name: string, items: Array<{ name: string; quantity: number; note?: string | null }>) =>
+    req<{ ok: boolean }>('/printer/order', { method: 'POST', body: JSON.stringify({ customer_name, items }) }),
 };

@@ -250,6 +250,45 @@ function buildBewirtungsbeleg(tab: Tab): Buffer {
   return Buffer.concat(p);
 }
 
+// Kitchen/bar order ticket — printed when items are sent to a tab (or paid
+// directly) so staff know what to make. Deliberately NOT a receipt: no prices,
+// no tax, no totals. Big and readable, items + notes only.
+export function buildOrderTicket(opts: {
+  customer_name: string;
+  items: { name: string; quantity: number; note?: string | null }[];
+  placed_at?: string;
+}): Buffer {
+  const placed = opts.placed_at ?? new Date().toISOString();
+  const p: Buffer[] = [];
+
+  // ── init ─────────────────────────────────────────────────────
+  p.push(ESC_INIT, CODEPAGE_CP1252);
+
+  // ── header ───────────────────────────────────────────────────
+  p.push(ALIGN_CENTER, BOLD_ON, DBL_HEIGHT_ON);
+  p.push(line('BESTELLUNG'));
+  p.push(DBL_HEIGHT_OFF, BOLD_OFF);
+  p.push(ALIGN_LEFT, divider('='));
+
+  // ── customer + time ──────────────────────────────────────────
+  p.push(BOLD_ON, DBL_HEIGHT_ON, line(opts.customer_name.slice(0, W_A)), DBL_HEIGHT_OFF, BOLD_OFF);
+  p.push(line(berlinDT(placed)));
+  p.push(divider('-'));
+
+  // ── items (no prices — this is for making the order) ─────────
+  for (const item of opts.items) {
+    p.push(BOLD_ON, DBL_HEIGHT_ON, line(`${item.quantity}x ${item.name}`), DBL_HEIGHT_OFF, BOLD_OFF);
+    if (item.note) {
+      p.push(line(`   \xBB ${item.note}`)); // » = 0xBB in CP1252
+    }
+  }
+
+  p.push(divider('='));
+  p.push(LF, FEED_CUT);
+
+  return Buffer.concat(p);
+}
+
 export function buildTestPage(): Buffer {
   const now = new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' });
   const p: Buffer[] = [

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import db from '../db/client';
 import { buildTab } from '../db/helpers';
-import { buildReceipt, buildTestPage } from '../printer/escpos';
+import { buildReceipt, buildTestPage, buildOrderTicket } from '../printer/escpos';
 import { sendToPrinter, pingPrinter } from '../printer/client';
 
 const router = Router();
@@ -47,6 +47,33 @@ router.post('/receipt/:tabId', async (req: Request, res: Response) => {
 
   try {
     await sendToPrinter(ip, buildReceipt(tab, { bewirtung }));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// POST /api/printer/order — kitchen/bar order ticket for newly added items
+router.post('/order', async (req: Request, res: Response) => {
+  const ip = getPrinterIp();
+  if (!ip) return void res.status(400).json({ error: 'no printer IP configured' });
+
+  const { customer_name, items } = req.body ?? {};
+  if (typeof customer_name !== 'string' || !customer_name.trim()) {
+    return void res.status(400).json({ error: 'customer_name is required' });
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return void res.status(400).json({ error: 'items must be a non-empty array' });
+  }
+
+  const lines = items.map((i: any) => ({
+    name: String(i.name ?? ''),
+    quantity: Math.max(1, Math.floor(Number(i.quantity) || 1)),
+    note: i.note ? String(i.note) : null,
+  }));
+
+  try {
+    await sendToPrinter(ip, buildOrderTicket({ customer_name: customer_name.trim(), items: lines }));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(502).json({ error: e.message });
