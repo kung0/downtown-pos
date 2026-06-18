@@ -98,12 +98,12 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
   const [printing, setPrinting] = useState(false);
   const [printMsg, setPrintMsg] = useState('');
 
-  async function handlePrint(e: React.MouseEvent) {
+  async function handlePrint(e: React.MouseEvent, bewirtung = false) {
     e.stopPropagation();
     setPrinting(true);
     setPrintMsg('');
     try {
-      await printerApi.printReceipt(tab.id);
+      await printerApi.printReceipt(tab.id, { bewirtung });
       setPrintMsg('Sent!');
     } catch (err) {
       setPrintMsg((err as Error).message);
@@ -223,7 +223,7 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             </p>
           )}
 
-          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <button
               className="btn"
               style={{ fontSize: '13px', padding: '5px 12px' }}
@@ -231,6 +231,14 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
               disabled={printing}
             >
               {printing ? 'Printing…' : 'Print receipt'}
+            </button>
+            <button
+              className="btn"
+              style={{ fontSize: '13px', padding: '5px 12px' }}
+              onClick={e => handlePrint(e, true)}
+              disabled={printing}
+            >
+              {printing ? 'Printing…' : 'Print + Bewirtung'}
             </button>
             {printMsg && (
               <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>
