@@ -18,6 +18,7 @@ venv/
 dist/
 build/
 *.egg-info/
+shared/types.js
 
 # Logs
 *.log
