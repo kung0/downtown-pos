@@ -232,6 +232,7 @@ function buildBewirtungsbeleg(tab: Tab): Buffer {
   p.push(line(FILL));
   p.push(line(FILL));
   p.push(line(FILL));
+  p.push(line(FILL));
 
   p.push(LF, line('Bewirtende Person / Gastgeber:'));
   p.push(line(FILL));
@@ -244,7 +245,6 @@ function buildBewirtungsbeleg(tab: Tab): Buffer {
   p.push(divider('-'));
   p.push(FONT_B);
   p.push(line('Angaben gem. \xA7 4 Abs. 5 Satz 1 Nr. 2 EStG.')); // § = 0xA7
-  p.push(line('Gesch\xE4ftliche Bewirtung: 70% abziehbar.'));
   p.push(FONT_A);
 
   return Buffer.concat(p);
