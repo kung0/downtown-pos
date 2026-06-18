@@ -300,34 +300,34 @@ describe('runningCostCents — 15-min rounding', () => {
   it('3 min pool session → 0 cents (rounds to 0)', () => {
     const start = berlin('2024-03-18T20:00');
     const now   = new Date(start.getTime() + 3 * 60_000);
-    expect(runningCostCents('pool', start, 0, now)).toBe(0);
+    expect(runningCostCents('billiard', start, 0, now)).toBe(0);
   });
 
   it('8 min pool session → bills 15 min at current rate', () => {
     // 15 min at 1200 c/h = 300 cents (weekday evening, standard, no discount)
     const start = berlin('2024-03-18T20:00');
     const now   = new Date(start.getTime() + 8 * 60_000);
-    expect(runningCostCents('pool', start, 0, now)).toBe(300);
+    expect(runningCostCents('billiard', start, 0, now)).toBe(300);
   });
 
   it('22 min pool session → rounds to 15 min', () => {
     const start = berlin('2024-03-18T20:00');
     const now   = new Date(start.getTime() + 22 * 60_000);
     // 15 min at 1200 c/h = 300 cents
-    expect(runningCostCents('pool', start, 0, now)).toBe(300);
+    expect(runningCostCents('billiard', start, 0, now)).toBe(300);
   });
 
   it('23 min pool session → rounds to 30 min', () => {
     const start = berlin('2024-03-18T20:00');
     const now   = new Date(start.getTime() + 23 * 60_000);
     // 30 min at 1200 c/h = 600 cents
-    expect(runningCostCents('pool', start, 0, now)).toBe(600);
+    expect(runningCostCents('billiard', start, 0, now)).toBe(600);
   });
 
   it('60 min pool session → stays 60 min', () => {
     const start = berlin('2024-03-18T20:00');
     const now   = new Date(start.getTime() + 60 * 60_000);
-    expect(runningCostCents('pool', start, 0, now)).toBe(1200);
+    expect(runningCostCents('billiard', start, 0, now)).toBe(1200);
   });
 
   // ── rounding interacts with rate boundary ─────────────────────────────────
@@ -337,6 +337,6 @@ describe('runningCostCents — 15-min rounding', () => {
     // 5 min at (1200-400)=800 + 10 min at 1200 → raw = 5/60*800 + 10/60*1200 = 66.67 + 200 = 266.67 → roundUpTo50 = 300
     const start = berlin('2024-03-18T16:55');
     const now   = new Date(start.getTime() + 8 * 60_000);
-    expect(runningCostCents('pool', start, 0, now)).toBe(300);
+    expect(runningCostCents('billiard', start, 0, now)).toBe(300);
   });
 });
