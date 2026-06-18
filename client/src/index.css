@@ -1190,6 +1190,7 @@ select.field__input { cursor: pointer; }
   .waitlist-panel { border-left: none; border-top: 1px solid var(--border); max-height: 40vh; overflow-y: auto; }
   .waitlist-list { max-height: none; }
 
+  .tabs-panel__new-order-btn { display: none; }
   .tabs-panel__toggle { display: inline; }
   .tabs-panel__header { cursor: pointer; }
   .tabs-panel--collapsed .tabs-panel__search,

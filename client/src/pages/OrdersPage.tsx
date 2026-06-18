@@ -545,7 +545,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             <span className="tabs-panel__title">Open tabs ({tabs.length})</span>
             <span className="tabs-panel__toggle">{tabsPanelOpen ? '▲' : '▼'}</span>
           </div>
-          <button className="btn btn--primary btn--sm" onClick={e => { e.stopPropagation(); openNewTabModal(); }}>+ New tab</button>
+          <button className="btn btn--primary btn--sm tabs-panel__new-order-btn" onClick={e => { e.stopPropagation(); setSelectedId(null); }}>+ New order</button>
         </div>
         <div className="tabs-panel__search">
           <input
