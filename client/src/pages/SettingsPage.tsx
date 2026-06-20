@@ -50,6 +50,18 @@ export default function SettingsPage() {
   const [testing, setTesting]             = useState(false);
   const [testMsg, setTestMsg]             = useState('');
 
+  // DSFinV-K state
+  const [dsfKassenId,      setDsfKassenId]      = useState('');
+  const [dsfBetreiber,     setDsfBetreiber]      = useState('');
+  const [dsfStrasse,       setDsfStrasse]        = useState('');
+  const [dsfPlz,           setDsfPlz]            = useState('');
+  const [dsfOrt,           setDsfOrt]            = useState('');
+  const [dsfLand,          setDsfLand]           = useState('DE');
+  const [dsfStnr,          setDsfStnr]           = useState('');
+  const [dsfUstid,         setDsfUstid]          = useState('');
+  const [savingDsf,        setSavingDsf]         = useState(false);
+  const [savedDsf,         setSavedDsf]          = useState(false);
+
   useEffect(() => {
     settingsApi.get().then(s => {
       setSettings(s);
@@ -59,6 +71,14 @@ export default function SettingsPage() {
       setDart(toInput(s.dart_hourly_rate_cents));
       setPrinterIp(s.printer_ip ?? '');
       setAutoPrint(s.printer_auto_print ?? false);
+      setDsfKassenId(s.dsfinvk_kassen_id ?? 'DOWNTOWN-001');
+      setDsfBetreiber(s.dsfinvk_betreiber_name ?? '');
+      setDsfStrasse(s.dsfinvk_strasse ?? '');
+      setDsfPlz(s.dsfinvk_plz ?? '');
+      setDsfOrt(s.dsfinvk_ort ?? '');
+      setDsfLand(s.dsfinvk_land ?? 'DE');
+      setDsfStnr(s.dsfinvk_stnr ?? '');
+      setDsfUstid(s.dsfinvk_ustid ?? '');
     }).catch(console.error);
 
     printerApi.status().then(setPrinterStatus).catch(console.error);
@@ -125,6 +145,40 @@ export default function SettingsPage() {
       setTimeout(() => setTestMsg(''), 4000);
     }
   }
+
+  async function handleSaveDsf() {
+    setSavingDsf(true);
+    try {
+      const updated = await settingsApi.update({
+        dsfinvk_kassen_id:      dsfKassenId.trim(),
+        dsfinvk_betreiber_name: dsfBetreiber.trim(),
+        dsfinvk_strasse:        dsfStrasse.trim(),
+        dsfinvk_plz:            dsfPlz.trim(),
+        dsfinvk_ort:            dsfOrt.trim(),
+        dsfinvk_land:           dsfLand.trim(),
+        dsfinvk_stnr:           dsfStnr.trim(),
+        dsfinvk_ustid:          dsfUstid.trim(),
+      });
+      setSettings(updated);
+      setSavedDsf(true);
+      setTimeout(() => setSavedDsf(false), 2000);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSavingDsf(false);
+    }
+  }
+
+  const dsfDirty = settings !== null && (
+    dsfKassenId  !== (settings.dsfinvk_kassen_id      ?? 'DOWNTOWN-001') ||
+    dsfBetreiber !== (settings.dsfinvk_betreiber_name ?? '') ||
+    dsfStrasse   !== (settings.dsfinvk_strasse        ?? '') ||
+    dsfPlz       !== (settings.dsfinvk_plz            ?? '') ||
+    dsfOrt       !== (settings.dsfinvk_ort            ?? '') ||
+    dsfLand      !== (settings.dsfinvk_land           ?? 'DE') ||
+    dsfStnr      !== (settings.dsfinvk_stnr           ?? '') ||
+    dsfUstid     !== (settings.dsfinvk_ustid          ?? '')
+  );
 
   const s  = standardCents ?? (settings?.pool_rate_standard_cents ?? 1200);
   const p  = peakCents     ?? (settings?.pool_rate_peak_cents ?? 1600);
@@ -269,6 +323,46 @@ export default function SettingsPage() {
                 disabled={savingPrinter || !printerDirty}
               >
                 {savingPrinter ? 'Saving…' : savedPrinter ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section__title">DSFinV-K — Exportkonfiguration</div>
+            <div className="settings-section__fields">
+              {[
+                { label: 'Kassennummer',    value: dsfKassenId,  onChange: setDsfKassenId,  placeholder: 'DOWNTOWN-001' },
+                { label: 'Betreiber',       value: dsfBetreiber, onChange: setDsfBetreiber, placeholder: 'Downtown GmbH' },
+                { label: 'Straße',          value: dsfStrasse,   onChange: setDsfStrasse,   placeholder: 'Musterstraße 1' },
+                { label: 'PLZ',             value: dsfPlz,       onChange: setDsfPlz,       placeholder: '64293' },
+                { label: 'Ort',             value: dsfOrt,       onChange: setDsfOrt,       placeholder: 'Darmstadt' },
+                { label: 'Land',            value: dsfLand,      onChange: setDsfLand,      placeholder: 'DE' },
+                { label: 'Steuernummer',    value: dsfStnr,      onChange: setDsfStnr,      placeholder: '007 815 08765' },
+                { label: 'USt-IdNr.',       value: dsfUstid,     onChange: setDsfUstid,     placeholder: 'DE123456789 (optional)' },
+              ].map(({ label, value, onChange, placeholder }) => (
+                <div className="field" key={label}>
+                  <label className="field__label">{label}</label>
+                  <input
+                    type="text"
+                    className="price-input__field"
+                    style={{ padding: '8px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', width: '260px', fontSize: '14px', background: 'var(--surface)', color: 'var(--text)', fontFamily: 'inherit' }}
+                    placeholder={placeholder}
+                    value={value}
+                    onChange={e => { onChange(e.target.value); setSavedDsf(false); }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="settings-section__footer">
+              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                Angaben erscheinen in jedem DSFinV-K-Export
+              </span>
+              <button
+                className="btn btn--primary"
+                onClick={handleSaveDsf}
+                disabled={savingDsf || !dsfDirty}
+              >
+                {savingDsf ? 'Speichern…' : savedDsf ? 'Gespeichert!' : 'Speichern'}
               </button>
             </div>
           </div>

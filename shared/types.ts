@@ -117,6 +117,14 @@ export interface Settings {
   dart_hourly_rate_cents: number;
   printer_ip: string;
   printer_auto_print: boolean;
+  dsfinvk_kassen_id: string;
+  dsfinvk_betreiber_name: string;
+  dsfinvk_strasse: string;
+  dsfinvk_plz: string;
+  dsfinvk_ort: string;
+  dsfinvk_land: string;
+  dsfinvk_stnr: string;
+  dsfinvk_ustid: string;
 }
 
 export interface DailySummary {

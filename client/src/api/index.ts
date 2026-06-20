@@ -127,3 +127,22 @@ export const printerApi = {
   printOrder: (customer_name: string, items: Array<{ name: string; quantity: number; note?: string | null }>) =>
     req<{ ok: boolean }>('/printer/order', { method: 'POST', body: JSON.stringify({ customer_name, items }) }),
 };
+
+export const exportApi = {
+  dsfinvk: async (from: string, to: string): Promise<void> => {
+    const res = await fetch(`${BASE}/export/dsfinvk?from=${from}&to=${to}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error((body as { error?: string }).error ?? res.statusText);
+    }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `dsfinvk_${from}_${to}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+};

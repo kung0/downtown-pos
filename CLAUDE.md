@@ -30,8 +30,8 @@ this is the POS system for **Downtown**, a community bar/café in central Darmst
 ## phase 2 (not yet)
 
 phase 2 adds:
-- **fiskaly TSE integration** for german fiscal law compliance (Kassensicherungsverordnung)
-- **epson TM-M30 receipt printer**
+- **fiskaly TSE integration** for german fiscal law compliance (Kassensicherungsverordnung) (done with test API)
+- **epson TM-M30 receipt printer** (done)
 - DSFinV-K export format
 
 the data model is already structured for this — don't add hacks that would require a rewrite.

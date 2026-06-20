@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { Session, ShiftSummary } from '@downtown/shared';
-import { sessionsApi } from '../api';
+import { sessionsApi, exportApi } from '../api';
 import { formatMoney } from '../utils/money';
 import { formatDateTime, formatTime } from '../utils/time';
 
@@ -20,6 +20,22 @@ export default function ReportsPage() {
   const [summary, setSummary]     = useState<ShiftSummary | null>(null);
   const [loading, setLoading]     = useState(true);
   const [sumLoading, setSumLoading] = useState(false);
+
+  // DSFinV-K export state — default to previous calendar month
+  const [exportFrom, setExportFrom] = useState(() => {
+    const now = new Date();
+    const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const m = now.getMonth() === 0 ? 12 : now.getMonth();
+    return `${y}-${String(m).padStart(2, '0')}-01`;
+  });
+  const [exportTo, setExportTo] = useState(() => {
+    const now = new Date();
+    // last day of previous month = day 0 of current month
+    const last = new Date(now.getFullYear(), now.getMonth(), 0);
+    return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+  });
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState('');
 
   useEffect(() => {
     sessionsApi.list()
@@ -68,6 +84,59 @@ export default function ReportsPage() {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="settings-section" style={{ marginTop: '24px' }}>
+        <div className="settings-section__title">DSFinV-K Export</div>
+        <div className="settings-section__fields" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }}>
+          <div className="field">
+            <label className="field__label">Von</label>
+            <input
+              type="date"
+              className="price-input__field"
+              style={{ padding: '8px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px', background: 'var(--surface)', color: 'var(--text)', fontFamily: 'inherit' }}
+              value={exportFrom}
+              onChange={e => { setExportFrom(e.target.value); setExportErr(''); }}
+            />
+          </div>
+          <div className="field">
+            <label className="field__label">Bis</label>
+            <input
+              type="date"
+              className="price-input__field"
+              style={{ padding: '8px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px', background: 'var(--surface)', color: 'var(--text)', fontFamily: 'inherit' }}
+              value={exportTo}
+              onChange={e => { setExportTo(e.target.value); setExportErr(''); }}
+            />
+          </div>
+        </div>
+        <div className="settings-section__footer">
+          {exportErr && (
+            <span style={{ fontSize: '13px', color: 'var(--danger)' }}>{exportErr}</span>
+          )}
+          {!exportErr && (
+            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+              ZIP mit Kassenabschluss, Bonkopf, Bonpos u.a.
+            </span>
+          )}
+          <button
+            className="btn btn--primary"
+            disabled={exporting || !exportFrom || !exportTo}
+            onClick={async () => {
+              setExporting(true);
+              setExportErr('');
+              try {
+                await exportApi.dsfinvk(exportFrom, exportTo);
+              } catch (e) {
+                setExportErr((e as Error).message);
+              } finally {
+                setExporting(false);
+              }
+            }}
+          >
+            {exporting ? 'Exportieren…' : 'Exportieren'}
+          </button>
+        </div>
       </div>
 
       {sumLoading ? (

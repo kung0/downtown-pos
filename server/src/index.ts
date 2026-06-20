@@ -19,6 +19,7 @@ import { resumeActiveTickers } from './ws/ticker';
 import { startRetryLoop } from './services/tseRetry';
 import { errorHandler } from './middleware/errors';
 import printerRouter from './routes/printer';
+import exportRouter from './routes/export';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
@@ -46,6 +47,7 @@ app.use('/api/waitlist', waitlistRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/printer', printerRouter);
+app.use('/api/export', exportRouter);
 
 app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
