@@ -288,7 +288,7 @@ router.delete('/:id/items/:itemId', (req: Request, res: Response) => {
     db.prepare('UPDATE line_items SET quantity = quantity - 1 WHERE id = ?').run(itemId);
   }
 
-  logEvent('item_removed', tabId, { item_id: itemId, name: item.name_snapshot });
+  logEvent('item_removed', tabId, { item_id: itemId, name: item.name_snapshot, price_cents: item.price_snapshot_cents, quantity_removed: 1 });
 
   const tab = buildTab(tabId)!;
   broadcast({ type: 'tab:updated', data: tab });
@@ -307,10 +307,13 @@ router.delete('/:id', (req: Request, res: Response) => {
   ).get(tabId);
   if (activeSession) return void res.status(409).json({ error: 'stop the running table first' });
 
-  logEvent('tab_deleted', tabId, { customer_name: tabRow.customer_name });
+  const deletedItems = db.prepare(
+    'SELECT name_snapshot, price_snapshot_cents, quantity FROM line_items WHERE tab_id = ?'
+  ).all(tabId) as Array<{ name_snapshot: string; price_snapshot_cents: number; quantity: number }>;
+
+  logEvent('tab_deleted', tabId, { customer_name: tabRow.customer_name, items: deletedItems });
 
   db.prepare('UPDATE waitlist SET tab_id = NULL WHERE tab_id = ?').run(tabId);
-  db.prepare('UPDATE events SET tab_id = NULL WHERE tab_id = ?').run(tabId);
   db.prepare('DELETE FROM billiard_sessions WHERE tab_id = ?').run(tabId);
   db.prepare('DELETE FROM line_items WHERE tab_id = ?').run(tabId);
   db.prepare('DELETE FROM tabs WHERE id = ?').run(tabId);
