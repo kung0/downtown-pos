@@ -17,7 +17,7 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
 export interface CategoryInput {
   name: string;
   parent_id: number | null;
-  tax_category: 'standard' | 'reduced';
+  tax_category?: 'standard' | 'reduced';
   sort_order?: number;
 }
 

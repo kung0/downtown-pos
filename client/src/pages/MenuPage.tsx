@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import type { Product, Category } from '@downtown/shared';
 import { productsApi, categoriesApi } from '../api';
 import type { CategoryInput } from '../api';
@@ -6,21 +6,45 @@ import { formatMoney, parseMoney, centsToInputValue } from '../utils/money';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-interface CategoryGroup {
-  parent: Category;
-  children: Category[];
+interface TreeNode {
+  cat: Category;
+  children: TreeNode[];
 }
 
-function buildTree(cats: Category[]): CategoryGroup[] {
-  const parents = cats
-    .filter(c => c.parent_id === null)
-    .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  return parents.map(parent => ({
-    parent,
-    children: cats
-      .filter(c => c.parent_id === parent.id)
-      .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)),
-  }));
+function buildTree(cats: Category[]): TreeNode[] {
+  const byParent = new Map<number | null, Category[]>();
+  cats.forEach(c => {
+    const key = c.parent_id ?? null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(c);
+  });
+  const sort = (list: Category[]) =>
+    [...list].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+  function nodes(parentId: number | null): TreeNode[] {
+    return sort(byParent.get(parentId) ?? []).map(cat => ({ cat, children: nodes(cat.id) }));
+  }
+  return nodes(null);
+}
+
+function flattenTree(nodes: TreeNode[], depth = 0): Array<{ cat: Category; depth: number }> {
+  return nodes.flatMap(n => [{ cat: n.cat, depth }, ...flattenTree(n.children, depth + 1)]);
+}
+
+function hasProducts(node: TreeNode, products: Product[]): boolean {
+  return products.some(p => p.category === node.cat.name) ||
+    node.children.some(child => hasProducts(child, products));
+}
+
+function collectDescendantIds(node: TreeNode): number[] {
+  return [node.cat.id, ...node.children.flatMap(collectDescendantIds)];
+}
+
+function findNode(nodes: TreeNode[], id: number): TreeNode | undefined {
+  for (const n of nodes) {
+    if (n.cat.id === id) return n;
+    const found = findNode(n.children, id);
+    if (found) return found;
+  }
 }
 
 // ── product form ──────────────────────────────────────────────────────────────
@@ -34,8 +58,8 @@ function productToForm(p: Product): ProductForm {
 
 // ── category form ─────────────────────────────────────────────────────────────
 
-interface CatForm { name: string; parent_id: string; tax_category: 'standard' | 'reduced'; sort_order: string; }
-const EMPTY_CAT_FORM: CatForm = { name: '', parent_id: '', tax_category: 'standard', sort_order: '0' };
+interface CatForm { name: string; parent_id: string; tax_category: 'standard' | 'reduced'; }
+const EMPTY_CAT_FORM: CatForm = { name: '', parent_id: '', tax_category: 'standard' };
 
 // ── component ─────────────────────────────────────────────────────────────────
 
@@ -78,13 +102,14 @@ export default function MenuPage() {
   useEffect(() => { load(); }, [load]);
 
   const catTree = buildTree(categories);
-  const childCats = categories.filter(c => c.parent_id !== null);
+  const flatCats = flattenTree(catTree);
+  const nonRootCats = categories.filter(c => c.parent_id !== null);
 
   // ── product actions ──────────────────────────────────────────────────────
 
   function openCreateProduct() {
     setEditingProduct(null);
-    const firstChild = childCats[0];
+    const firstChild = nonRootCats[0];
     setProductForm({ ...EMPTY_PRODUCT_FORM, category: firstChild?.name ?? '' });
     setProductFormError(null);
     setShowProductModal(true);
@@ -138,17 +163,10 @@ export default function MenuPage() {
 
   // ── category actions ─────────────────────────────────────────────────────
 
-  function openCreateParent() {
+  function openCreateCat(parentId?: number) {
     setEditingCat(null);
-    setCatForm({ ...EMPTY_CAT_FORM, parent_id: '', tax_category: 'standard' });
-    setCatFormError(null);
-    setShowCatModal(true);
-  }
-
-  function openCreateChild(parentId: number) {
-    setEditingCat(null);
-    const parent = categories.find(c => c.id === parentId);
-    setCatForm({ ...EMPTY_CAT_FORM, parent_id: String(parentId), tax_category: parent?.tax_category ?? 'standard' });
+    const parent = parentId != null ? categories.find(c => c.id === parentId) : undefined;
+    setCatForm({ ...EMPTY_CAT_FORM, parent_id: parentId != null ? String(parentId) : '', tax_category: parent?.tax_category ?? 'standard' });
     setCatFormError(null);
     setShowCatModal(true);
   }
@@ -159,7 +177,6 @@ export default function MenuPage() {
       name:         cat.name,
       parent_id:    cat.parent_id === null ? '' : String(cat.parent_id),
       tax_category: cat.tax_category,
-      sort_order:   String(cat.sort_order),
     });
     setCatFormError(null);
     setShowCatModal(true);
@@ -168,22 +185,19 @@ export default function MenuPage() {
   async function handleSaveCat() {
     if (!catForm.name.trim()) { setCatFormError('Name is required'); return; }
 
-    const isChild  = catForm.parent_id !== '';
-    const parentId = isChild ? parseInt(catForm.parent_id, 10) : null;
+    const parentId = catForm.parent_id !== '' ? parseInt(catForm.parent_id, 10) : null;
 
     setSavingCat(true);
     setCatFormError(null);
     try {
       const payload: CategoryInput = {
-        name:         catForm.name.trim(),
-        parent_id:    parentId,
+        name: catForm.name.trim(),
+        parent_id: parentId,
         tax_category: catForm.tax_category,
-        sort_order:   parseInt(catForm.sort_order, 10) || 0,
       };
       if (editingCat) {
         const updated = await categoriesApi.update(editingCat.id, payload);
         setCategories(prev => prev.map(c => c.id === updated.id ? updated : c));
-        // also update product category references in local state if renamed
         if (updated.name !== editingCat.name) {
           setProducts(prev => prev.map(p =>
             p.category === editingCat.name ? { ...p, category: updated.name } : p
@@ -201,12 +215,15 @@ export default function MenuPage() {
     }
   }
 
-  async function handleDeleteCat(cat: Category) {
-    const label = cat.parent_id === null ? `parent category "${cat.name}" and all its subcategories` : `subcategory "${cat.name}"`;
+  async function handleDeleteCat(node: TreeNode) {
+    const label = node.cat.parent_id === null
+      ? `category "${node.cat.name}" and all subcategories`
+      : `subcategory "${node.cat.name}"`;
     if (!window.confirm(`Delete ${label}?`)) return;
     try {
-      await categoriesApi.delete(cat.id);
-      setCategories(prev => prev.filter(c => c.id !== cat.id && c.parent_id !== cat.id));
+      await categoriesApi.delete(node.cat.id);
+      const removedIds = new Set(collectDescendantIds(node));
+      setCategories(prev => prev.filter(c => !removedIds.has(c.id)));
     } catch (e) {
       alert((e as Error).message);
     }
@@ -226,7 +243,7 @@ export default function MenuPage() {
             <button className="btn btn--primary" onClick={openCreateProduct}>+ Produkt</button>
           )}
           {view === 'categories' && (
-            <button className="btn btn--primary" onClick={openCreateParent}>+ Kategorie</button>
+            <button className="btn btn--primary" onClick={() => openCreateCat()}>+ Kategorie</button>
           )}
         </div>
       </div>
@@ -254,111 +271,85 @@ export default function MenuPage() {
                 <th style={{ width: 72 }}></th>
               </tr>
             </thead>
-            {catTree.map(({ parent, children }) => {
-              const groupItems = children.flatMap(child =>
-                products.filter(p => p.category === child.name)
-              );
-              if (groupItems.length === 0) return null;
-              return (
-                <tbody key={parent.id}>
-                  <tr className="category-parent-header">
-                    <td colSpan={5}>{parent.name}</td>
-                  </tr>
-                  {children.flatMap(child => {
-                    const items = products.filter(p => p.category === child.name);
-                    if (items.length === 0) return [];
-                    return [
-                      <tr key={`h-${child.id}`} className="category-header">
-                        <td colSpan={5}>{child.name}</td>
-                      </tr>,
-                      ...items.map(p => (
-                        <tr key={p.id}>
-                          <td>
-                            <label className="toggle">
-                              <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
-                              <span className="toggle__slider" />
-                            </label>
-                          </td>
-                          <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
-                            {p.name}
-                          </td>
-                          <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
-                          <td style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.price_cents)}</td>
-                          <td>
-                            <button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button>
-                          </td>
-                        </tr>
-                      )),
-                    ];
-                  })}
-                </tbody>
-              );
-            })}
-            {/* Uncategorized — products whose category isn't in the tree */}
-            {(() => {
-              const knownCats = new Set(childCats.map(c => c.name));
-              const orphans = products.filter(p => !knownCats.has(p.category));
-              if (orphans.length === 0) return null;
-              return (
-                <tbody>
-                  <tr className="category-parent-header"><td colSpan={5}>Andere</td></tr>
-                  {orphans.map(p => (
-                    <tr key={p.id}>
-                      <td>
-                        <label className="toggle">
-                          <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
-                          <span className="toggle__slider" />
-                        </label>
-                      </td>
-                      <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
-                        {p.name}
-                      </td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.price_cents)}</td>
-                      <td><button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button></td>
+            <tbody>
+              {flatCats
+                .filter(({ cat }) => {
+                  const node = findNode(catTree, cat.id);
+                  return node ? hasProducts(node, products) : false;
+                })
+                .map(({ cat, depth }) => (
+                  <Fragment key={cat.id}>
+                    <tr className={depth === 0 ? 'category-parent-header' : 'category-header'}>
+                      <td colSpan={5} style={depth > 1 ? { paddingLeft: depth * 12 } : undefined}>{cat.name}</td>
                     </tr>
-                  ))}
-                </tbody>
-              );
-            })()}
+                    {products.filter(p => p.category === cat.name).map(p => (
+                      <tr key={p.id}>
+                        <td>
+                          <label className="toggle">
+                            <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
+                            <span className="toggle__slider" />
+                          </label>
+                        </td>
+                        <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
+                          {p.name}
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
+                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.price_cents)}</td>
+                        <td>
+                          <button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              {/* Uncategorized — products whose category isn't in any tree node */}
+              {(() => {
+                const knownCats = new Set(categories.map(c => c.name));
+                const orphans = products.filter(p => !knownCats.has(p.category));
+                if (orphans.length === 0) return null;
+                return (
+                  <Fragment>
+                    <tr className="category-parent-header"><td colSpan={5}>Andere</td></tr>
+                    {orphans.map(p => (
+                      <tr key={p.id}>
+                        <td>
+                          <label className="toggle">
+                            <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
+                            <span className="toggle__slider" />
+                          </label>
+                        </td>
+                        <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
+                          {p.name}
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
+                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.price_cents)}</td>
+                        <td><button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button></td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })()}
+            </tbody>
           </table>
         </div>
       )}
 
       {/* ════════════════ CATEGORIES VIEW ════════════════ */}
       {view === 'categories' && (
-        <div className="cat-tree">
-          {catTree.length === 0 && (
-            <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
-              No categories yet — add one above.
-            </p>
-          )}
-          {catTree.map(({ parent, children }) => (
-            <div key={parent.id} className="cat-group">
-              <div className="cat-parent-row">
-                <span className="cat-parent-row__name">{parent.name}</span>
-                <div className="cat-row-actions">
-                  <button className="btn btn--ghost btn--sm" onClick={() => openEditCat(parent)}>Edit</button>
-                  <button className="btn btn--ghost btn--sm btn--danger-text" onClick={() => handleDeleteCat(parent)}>Delete</button>
-                </div>
-              </div>
-
-              <div className="cat-children">
-                {children.map(child => (
-                  <div key={child.id} className="cat-child-row">
-                    <span className="cat-child-row__name">{child.name}</span>
-                    <span className={`cat-tax-badge cat-tax-badge--${child.tax_category}`}>
-                      {child.tax_category === 'reduced' ? '7 %' : '19 %'}
-                    </span>
-                    <div className="cat-row-actions">
-                      <button className="btn btn--ghost btn--sm" onClick={() => openEditCat(child)}>Edit</button>
-                      <button className="btn btn--ghost btn--sm btn--danger-text" onClick={() => handleDeleteCat(child)}>Delete</button>
-                    </div>
-                  </div>
-                ))}
-                <button className="cat-add-child-btn" onClick={() => openCreateChild(parent.id)}>
-                  + Unterkategorie
-                </button>
+        <div className="cat-list">
+          {catTree.length === 0 ? (
+            <p className="cat-list__empty">Noch keine Kategorien — oben „+ Kategorie" klicken.</p>
+          ) : flatCats.map(({ cat, depth }) => (
+            <div key={cat.id} className={`cat-row${depth === 0 ? ' cat-row--root' : ''}`}>
+              {depth > 0 && <div className="cat-row__spacer" style={{ width: depth * 20 }} />}
+              <span className="cat-row__name">{cat.name}</span>
+              <span className={`cat-tax-badge cat-tax-badge--${cat.tax_category}`}>
+                {cat.tax_category === 'reduced' ? '7 %' : '19 %'}
+              </span>
+              <div className="cat-row__actions">
+                <button className="btn btn--ghost btn--sm" onClick={() => openCreateCat(cat.id)}>+ Sub</button>
+                <button className="btn btn--ghost btn--sm" onClick={() => openEditCat(cat)}>Edit</button>
+                <button className="btn btn--ghost btn--sm btn--danger-text" onClick={() => handleDeleteCat(findNode(catTree, cat.id)!)}>Delete</button>
               </div>
             </div>
           ))}
@@ -392,12 +383,10 @@ export default function MenuPage() {
                   onChange={e => setProductForm(f => ({ ...f, category: e.target.value }))}
                 >
                   <option value="">— wählen —</option>
-                  {catTree.map(({ parent, children }) => (
-                    <optgroup key={parent.id} label={parent.name}>
-                      {children.map(child => (
-                        <option key={child.id} value={child.name}>{child.name}</option>
-                      ))}
-                    </optgroup>
+                  {flatCats.map(({ cat, depth }) => (
+                    <option key={cat.id} value={cat.name}>
+                      {'— '.repeat(depth)}{cat.name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -438,11 +427,7 @@ export default function MenuPage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal__header">
               <h2 className="modal__title">
-                {editingCat
-                  ? `Kategorie bearbeiten`
-                  : catForm.parent_id
-                    ? 'Neue Unterkategorie'
-                    : 'Neue Elternkategorie'}
+                {editingCat ? 'Kategorie bearbeiten' : catForm.parent_id ? 'Neue Unterkategorie' : 'Neue Kategorie'}
               </h2>
               <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setShowCatModal(false)}>✕</button>
             </div>
@@ -458,38 +443,36 @@ export default function MenuPage() {
                 />
               </div>
               <div className="field">
-                <label className="field__label">Elternkategorie</label>
+                <label className="field__label">Übergeordnete Kategorie</label>
                 <select
                   className="field__input"
                   value={catForm.parent_id}
-                  onChange={e => setCatForm(f => ({ ...f, parent_id: e.target.value }))}
+                  onChange={e => {
+                    const pid = e.target.value;
+                    const parent = categories.find(c => String(c.id) === pid);
+                    setCatForm(f => ({ ...f, parent_id: pid, tax_category: parent?.tax_category ?? f.tax_category }));
+                  }}
                 >
-                  <option value="">— keine (ist selbst Elternelement) —</option>
-                  {catTree.map(({ parent }) => (
-                    <option key={parent.id} value={String(parent.id)}>{parent.name}</option>
-                  ))}
+                  <option value="">— keine (oberste Ebene) —</option>
+                  {flatCats
+                    .filter(({ cat }) => editingCat == null || !collectDescendantIds(findNode(catTree, editingCat.id)!).includes(cat.id))
+                    .map(({ cat, depth }) => (
+                      <option key={cat.id} value={String(cat.id)}>
+                        {'— '.repeat(depth)}{cat.name}
+                      </option>
+                    ))}
                 </select>
               </div>
-              {catForm.parent_id !== '' && (
-                <div className="field">
-                  <label className="field__label">Steuersatz</label>
-                  <select
-                    className="field__input"
-                    value={catForm.tax_category}
-                    onChange={e => setCatForm(f => ({ ...f, tax_category: e.target.value as 'standard' | 'reduced' }))}
-                  >
-                    <option value="standard">Standard 19 %</option>
-                    <option value="reduced">Ermäßigt 7 %</option>
-                  </select>
-                </div>
-              )}
               <div className="field">
-                <label className="field__label">Sortierung</label>
-                <input
-                  className="field__input" type="number"
-                  value={catForm.sort_order}
-                  onChange={e => setCatForm(f => ({ ...f, sort_order: e.target.value }))}
-                />
+                <label className="field__label">Steuersatz</label>
+                <select
+                  className="field__input"
+                  value={catForm.tax_category}
+                  onChange={e => setCatForm(f => ({ ...f, tax_category: e.target.value as 'standard' | 'reduced' }))}
+                >
+                  <option value="standard">19 % (Standard)</option>
+                  <option value="reduced">7 % (Ermäßigt)</option>
+                </select>
               </div>
             </div>
             <div className="modal__footer">

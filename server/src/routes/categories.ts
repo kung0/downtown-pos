@@ -25,16 +25,21 @@ router.get('/', (_req: Request, res: Response) => {
 
 // POST /api/categories
 router.post('/', (req: Request, res: Response) => {
-  const { name, parent_id = null, tax_category = 'standard', sort_order = 0 } = req.body;
+  const { name, parent_id = null, tax_category: bodyTax, sort_order = 0 } = req.body;
 
   if (!name?.trim()) return void res.status(400).json({ error: 'name is required' });
-  if (!['standard', 'reduced'].includes(tax_category)) return void res.status(400).json({ error: 'invalid tax_category' });
 
+  if (bodyTax !== undefined && !['standard', 'reduced'].includes(bodyTax)) {
+    return void res.status(400).json({ error: 'invalid tax_category' });
+  }
+
+  let tax_category: string;
   if (parent_id !== null) {
-    const parent = db.prepare('SELECT id FROM categories WHERE id = ?').get(parent_id);
+    const parent = db.prepare('SELECT id, tax_category FROM categories WHERE id = ?').get(parent_id) as CatRow | undefined;
     if (!parent) return void res.status(400).json({ error: 'parent not found' });
-    const grandparent = db.prepare('SELECT parent_id FROM categories WHERE id = ?').get(parent_id) as CatRow;
-    if (grandparent.parent_id !== null) return void res.status(400).json({ error: 'only one level of nesting allowed' });
+    tax_category = bodyTax ?? parent.tax_category;
+  } else {
+    tax_category = bodyTax ?? 'standard';
   }
 
   const conflict = db.prepare('SELECT id FROM categories WHERE name = ?').get(name.trim());
@@ -56,19 +61,32 @@ router.put('/:id', (req: Request, res: Response) => {
   const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(id) as CatRow | undefined;
   if (!existing) return void res.status(404).json({ error: 'not found' });
 
-  const name       = (req.body.name as string | undefined)?.trim() ?? existing.name;
-  const parent_id  = 'parent_id' in req.body ? req.body.parent_id : existing.parent_id;
-  const tax_category = req.body.tax_category ?? existing.tax_category;
+  const name      = (req.body.name as string | undefined)?.trim() ?? existing.name;
+  const parent_id = 'parent_id' in req.body ? req.body.parent_id : existing.parent_id;
   const sort_order = req.body.sort_order ?? existing.sort_order;
 
   if (!name) return void res.status(400).json({ error: 'name is required' });
-  if (!['standard', 'reduced'].includes(tax_category)) return void res.status(400).json({ error: 'invalid tax_category' });
 
+  let tax_category = existing.tax_category;
   if (parent_id !== null) {
-    const parent = db.prepare('SELECT id, parent_id FROM categories WHERE id = ?').get(parent_id) as CatRow | undefined;
-    if (!parent) return void res.status(400).json({ error: 'parent not found' });
-    if (parent.parent_id !== null) return void res.status(400).json({ error: 'only one level of nesting allowed' });
     if (parent_id === id) return void res.status(400).json({ error: 'cannot be its own parent' });
+    const parent = db.prepare('SELECT id, tax_category FROM categories WHERE id = ?').get(parent_id) as CatRow | undefined;
+    if (!parent) return void res.status(400).json({ error: 'parent not found' });
+    // cycle detection: walk up from parent — none should be id
+    let cursor: CatRow | undefined = parent;
+    while (cursor) {
+      if (cursor.id === id) return void res.status(400).json({ error: 'circular reference: would create a cycle' });
+      cursor = cursor.parent_id !== null
+        ? db.prepare('SELECT id, parent_id, tax_category FROM categories WHERE id = ?').get(cursor.parent_id) as CatRow | undefined
+        : undefined;
+    }
+    tax_category = req.body.tax_category ?? parent.tax_category;
+  } else {
+    const bodyTax = req.body.tax_category;
+    if (bodyTax !== undefined && !['standard', 'reduced'].includes(bodyTax)) {
+      return void res.status(400).json({ error: 'invalid tax_category' });
+    }
+    tax_category = bodyTax ?? existing.tax_category;
   }
 
   const conflict = db.prepare('SELECT id FROM categories WHERE name = ? AND id != ?').get(name, id);

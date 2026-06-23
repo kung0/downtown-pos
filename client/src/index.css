@@ -287,6 +287,7 @@ body {
   background: var(--surface);
   transition: border-color 0.15s, box-shadow 0.15s;
   -webkit-appearance: none;
+  appearance: none;
 }
 .field__input:focus {
   outline: none;
@@ -1299,83 +1300,64 @@ select.field__input { cursor: pointer; }
 }
 
 /* ── Category tree (Kategorien tab) ── */
-.cat-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.cat-group {
+.cat-list {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
-.cat-parent-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: #edf2f7;
-  border-bottom: 1px solid var(--border);
+.cat-list__empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 48px 20px;
+  font-size: 14px;
 }
 
-.cat-parent-row__name {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text);
-}
-
-.cat-children {
-  padding: 8px 0 4px;
-}
-
-.cat-child-row {
+.cat-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 16px 9px 28px;
+  padding: 0 14px;
+  min-height: 44px;
   border-bottom: 1px solid var(--border);
 }
-.cat-child-row:last-of-type { border-bottom: none; }
+.cat-row:last-child { border-bottom: none; }
+.cat-row:hover { background: #f7fafc; }
 
-.cat-child-row__name {
+.cat-row--root { background: #edf2f7; min-height: 40px; }
+.cat-row--root:hover { background: #e2e8f0; }
+.cat-row--root .cat-row__name {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.cat-row__spacer { flex-shrink: 0; }
+
+.cat-row__name {
   flex: 1;
   font-size: 14px;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.cat-row__actions { display: flex; gap: 4px; flex-shrink: 0; }
 
 .cat-tax-badge {
   font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
   border-radius: 99px;
+  flex-shrink: 0;
 }
 .cat-tax-badge--standard { background: #ebf4ff; color: #2b6cb0; }
 .cat-tax-badge--reduced  { background: #f0fff4; color: #276749; }
 
-.cat-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
-
 .btn--danger-text { color: var(--danger); }
 .btn--danger-text:hover { background: #fff5f5; border-color: #fed7d7; }
-
-.cat-add-child-btn {
-  display: block;
-  width: 100%;
-  padding: 9px 16px 9px 28px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--primary);
-  text-align: left;
-  transition: background 0.12s;
-}
-.cat-add-child-btn:hover { background: #ebf4ff; }
-}
