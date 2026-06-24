@@ -149,6 +149,8 @@ export function buildReceipt(tab: Tab, opts: { bewirtung?: boolean } = {}): Buff
     if (tab.tse_signature_counter != null) {
       p.push(line(`Signaturz\xE4hler:   ${tab.tse_signature_counter}`)); // ä = 0xE4
     }
+    // DSFinV-K §2.7 simplification: first-order time must be printed in plain text
+    p.push(line(`Erstbestellung: ${berlinDT(tab.opened_at)}`));
     if (tab.tse_start_time) {
       p.push(line(`Start:  ${berlinDT(tab.tse_start_time)}`));
     }
