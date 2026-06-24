@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
-import type { Product, Category } from '@downtown/shared';
-import { productsApi, categoriesApi } from '../api';
+import type { Product, ProductVariant, Category } from '@downtown/shared';
+import { productsApi, variantsApi, categoriesApi } from '../api';
 import type { CategoryInput } from '../api';
-import { formatMoney, parseMoney, centsToInputValue } from '../utils/money';
+import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../utils/money';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +56,8 @@ function productToForm(p: Product): ProductForm {
   return { name: p.name, category: p.category, price: centsToInputValue(p.price_cents), sort_order: String(p.sort_order) };
 }
 
+interface VariantDraft { name: string; price: string; }
+
 // ── category form ─────────────────────────────────────────────────────────────
 
 interface CatForm { name: string; parent_id: string; tax_category: 'standard' | 'reduced'; }
@@ -78,6 +80,10 @@ export default function MenuPage() {
   const [productForm,      setProductForm]      = useState<ProductForm>(EMPTY_PRODUCT_FORM);
   const [productFormError, setProductFormError] = useState<string | null>(null);
   const [savingProduct,    setSavingProduct]    = useState(false);
+  const [hasVariants,      setHasVariants]      = useState(false);
+  const [productVariants,  setProductVariants]  = useState<ProductVariant[]>([]);
+  const [variantDraft,     setVariantDraft]     = useState<VariantDraft | null>(null);
+  const [savingVariant,    setSavingVariant]    = useState(false);
 
   // category modal
   const [showCatModal, setShowCatModal] = useState(false);
@@ -112,6 +118,9 @@ export default function MenuPage() {
     const firstChild = nonRootCats[0];
     setProductForm({ ...EMPTY_PRODUCT_FORM, category: firstChild?.name ?? '' });
     setProductFormError(null);
+    setHasVariants(false);
+    setProductVariants([]);
+    setVariantDraft(null);
     setShowProductModal(true);
   }
 
@@ -119,6 +128,9 @@ export default function MenuPage() {
     setEditingProduct(p);
     setProductForm(productToForm(p));
     setProductFormError(null);
+    setHasVariants(p.has_variants);
+    setProductVariants(p.variants ?? []);
+    setVariantDraft(null);
     setShowProductModal(true);
   }
 
@@ -144,11 +156,12 @@ export default function MenuPage() {
         name: productForm.name.trim(),
         category: productForm.category,
         price_cents,
+        has_variants: hasVariants,
         sort_order: parseInt(productForm.sort_order, 10) || 0,
       };
       if (editingProduct) {
         const updated = await productsApi.update(editingProduct.id, payload);
-        setProducts(prev => prev.map(x => x.id === updated.id ? updated : x));
+        setProducts(prev => prev.map(x => x.id === updated.id ? { ...updated, variants: productVariants } : x));
       } else {
         const created = await productsApi.create(payload);
         setProducts(prev => [...prev, created]);
@@ -158,6 +171,58 @@ export default function MenuPage() {
       setProductFormError((e as Error).message);
     } finally {
       setSavingProduct(false);
+    }
+  }
+
+  // ── variant actions ──────────────────────────────────────────────────────
+
+  async function handleAddVariant() {
+    if (!editingProduct || !variantDraft) return;
+    const price_cents = variantDraft.price.trim() === '' ? 0 : parseMoneyAny(variantDraft.price);
+    if (!variantDraft.name.trim()) { setProductFormError('Variant name is required'); return; }
+    if (price_cents === null) { setProductFormError('Enter a valid variant price'); return; }
+    setSavingVariant(true);
+    setProductFormError(null);
+    try {
+      const created = await variantsApi.create(editingProduct.id, { name: variantDraft.name.trim(), price_cents });
+      setProductVariants(prev => [...prev, created]);
+      setProducts(prev => prev.map(p => p.id === editingProduct.id
+        ? { ...p, variants: [...(p.variants ?? []), created] }
+        : p
+      ));
+      setVariantDraft(null);
+    } catch (e) {
+      setProductFormError((e as Error).message);
+    } finally {
+      setSavingVariant(false);
+    }
+  }
+
+  async function handleDeleteVariant(variantId: number) {
+    if (!editingProduct) return;
+    try {
+      await variantsApi.delete(editingProduct.id, variantId);
+      setProductVariants(prev => prev.filter(v => v.id !== variantId));
+      setProducts(prev => prev.map(p => p.id === editingProduct.id
+        ? { ...p, variants: (p.variants ?? []).filter(v => v.id !== variantId) }
+        : p
+      ));
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function handleToggleVariant(variant: ProductVariant) {
+    if (!editingProduct) return;
+    try {
+      const updated = await variantsApi.toggleAvailability(editingProduct.id, variant.id);
+      setProductVariants(prev => prev.map(v => v.id === updated.id ? updated : v));
+      setProducts(prev => prev.map(p => p.id === editingProduct.id
+        ? { ...p, variants: (p.variants ?? []).map(v => v.id === updated.id ? updated : v) }
+        : p
+      ));
+    } catch (e) {
+      alert((e as Error).message);
     }
   }
 
@@ -294,7 +359,11 @@ export default function MenuPage() {
                           {p.name}
                         </td>
                         <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
-                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.price_cents)}</td>
+                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                          {p.has_variants
+                            ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.variants?.length ?? 0} Varianten</span>
+                            : formatMoney(p.price_cents)}
+                        </td>
                         <td>
                           <button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button>
                         </td>
@@ -322,7 +391,11 @@ export default function MenuPage() {
                           {p.name}
                         </td>
                         <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
-                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.price_cents)}</td>
+                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                          {p.has_variants
+                            ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.variants?.length ?? 0} Varianten</span>
+                            : formatMoney(p.price_cents)}
+                        </td>
                         <td><button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button></td>
                       </tr>
                     ))}
@@ -410,6 +483,80 @@ export default function MenuPage() {
                   onChange={e => setProductForm(f => ({ ...f, sort_order: e.target.value }))}
                 />
               </div>
+              <div className="field">
+                <label className="field__label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={hasVariants}
+                    onChange={e => setHasVariants(e.target.checked)}
+                    style={{ width: 15, height: 15, cursor: 'pointer' }}
+                  />
+                  Hat Varianten
+                </label>
+              </div>
+              {hasVariants && editingProduct && (
+                <div className="variants-admin-section">
+                  <div className="field__label" style={{ marginBottom: 8 }}>Varianten</div>
+                  {productVariants.map(v => (
+                    <div key={v.id} className="variant-admin-row">
+                      <label className="toggle" style={{ flexShrink: 0 }}>
+                        <input type="checkbox" checked={v.available} onChange={() => handleToggleVariant(v)} />
+                        <span className="toggle__slider" />
+                      </label>
+                      <span style={{ flex: 1, fontSize: 14, color: v.available ? 'inherit' : 'var(--text-muted)', textDecoration: v.available ? 'none' : 'line-through' }}>
+                        {v.name}
+                      </span>
+                      <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>
+                        {formatMoney(v.price_cents)}
+                      </span>
+                      <button
+                        className="btn btn--ghost btn--sm btn--danger-text"
+                        style={{ padding: '2px 6px' }}
+                        onClick={() => handleDeleteVariant(v.id)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  {variantDraft ? (
+                    <div className="variant-admin-row variant-admin-row--draft">
+                      <input
+                        className="field__input"
+                        placeholder="Name"
+                        autoFocus
+                        value={variantDraft.name}
+                        onChange={e => setVariantDraft(d => d ? { ...d, name: e.target.value } : d)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddVariant(); if (e.key === 'Escape') setVariantDraft(null); }}
+                        style={{ flex: 1, minWidth: 0 }}
+                      />
+                      <div className="price-input" style={{ width: 100, flexShrink: 0 }}>
+                        <span className="price-input__prefix">€</span>
+                        <input
+                          className="price-input__field" type="text" inputMode="decimal" placeholder="gratis"
+                          value={variantDraft.price}
+                          onChange={e => setVariantDraft(d => d ? { ...d, price: e.target.value } : d)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleAddVariant(); }}
+                        />
+                      </div>
+                      <button className="btn btn--primary btn--sm" onClick={handleAddVariant} disabled={savingVariant}>+</button>
+                      <button className="btn btn--ghost btn--sm" onClick={() => setVariantDraft(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      style={{ marginTop: 6 }}
+                      onClick={() => setVariantDraft({ name: '', price: '' })}
+                    >
+                      + Variante
+                    </button>
+                  )}
+                </div>
+              )}
+              {hasVariants && !editingProduct && (
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Erst speichern, dann Varianten hinzufügen.
+                </p>
+              )}
             </div>
             <div className="modal__footer">
               <button className="btn btn--ghost" onClick={() => setShowProductModal(false)}>Abbrechen</button>

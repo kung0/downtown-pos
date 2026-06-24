@@ -102,6 +102,16 @@ export function initSchema(): void {
       called_at     TEXT,
       resolved_at   TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS product_variants (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id  INTEGER NOT NULL REFERENCES products(id),
+      name        TEXT    NOT NULL,
+      price_cents INTEGER NOT NULL,
+      available   INTEGER NOT NULL DEFAULT 1,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT    NOT NULL
+    );
   `);
 
   // Migrations — safe to run on every startup
@@ -123,6 +133,8 @@ export function initSchema(): void {
   try { db.exec('ALTER TABLE tabs ADD COLUMN subtotal_reduced_cents INTEGER'); } catch {}
   try { db.exec('ALTER TABLE tabs ADD COLUMN tse_start_time TEXT'); } catch {}
   try { db.exec('ALTER TABLE tabs ADD COLUMN tse_signature_counter INTEGER'); } catch {}
+  try { db.exec('ALTER TABLE products ADD COLUMN has_variants INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec('ALTER TABLE line_items ADD COLUMN variant_id INTEGER REFERENCES product_variants(id)'); } catch {}
 
   // Set correct tax_category based on product category (idempotent)
   db.exec(`

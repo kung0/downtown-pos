@@ -1,4 +1,4 @@
-import type { Product, Tab, DailySummary, PoolTable, WaitlistEntry, BilliardHistoryItem, Settings, Session, ShiftSummary, Category } from '@downtown/shared';
+import type { Product, ProductVariant, Tab, DailySummary, PoolTable, WaitlistEntry, BilliardHistoryItem, Settings, Session, ShiftSummary, Category } from '@downtown/shared';
 
 const BASE = '/api';
 
@@ -43,10 +43,27 @@ export const productsApi = {
   list: () => req<Product[]>('/products'),
   create: (data: ProductInput) =>
     req<Product>('/products', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: number, data: ProductInput) =>
+  update: (id: number, data: ProductInput & { has_variants?: boolean }) =>
     req<Product>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   toggleAvailability: (id: number) =>
     req<Product>(`/products/${id}/availability`, { method: 'PATCH' }),
+};
+
+export interface ProductVariantInput {
+  name: string;
+  price_cents: number;
+  sort_order?: number;
+}
+
+export const variantsApi = {
+  create: (productId: number, data: ProductVariantInput) =>
+    req<ProductVariant>(`/products/${productId}/variants`, { method: 'POST', body: JSON.stringify(data) }),
+  update: (productId: number, variantId: number, data: ProductVariantInput) =>
+    req<ProductVariant>(`/products/${productId}/variants/${variantId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (productId: number, variantId: number) =>
+    req<{ id: number }>(`/products/${productId}/variants/${variantId}`, { method: 'DELETE' }),
+  toggleAvailability: (productId: number, variantId: number) =>
+    req<ProductVariant>(`/products/${productId}/variants/${variantId}/availability`, { method: 'PATCH' }),
 };
 
 export const tabsApi = {
@@ -56,15 +73,15 @@ export const tabsApi = {
     req<Tab>('/tabs', { method: 'POST', body: JSON.stringify({ customer_name, notes }) }),
   updateNotes: (tabId: number, notes: string) =>
     req<Tab>(`/tabs/${tabId}/notes`, { method: 'PATCH', body: JSON.stringify({ notes }) }),
-  addItem: (tabId: number, product_id: number, quantity = 1, note?: string) =>
-    req<Tab>(`/tabs/${tabId}/items`, { method: 'POST', body: JSON.stringify({ product_id, quantity, note }) }),
+  addItem: (tabId: number, product_id: number, quantity = 1, note?: string, variant_id?: number) =>
+    req<Tab>(`/tabs/${tabId}/items`, { method: 'POST', body: JSON.stringify({ product_id, quantity, note, variant_id }) }),
   removeItem: (tabId: number, itemId: number) =>
     req<Tab>(`/tabs/${tabId}/items/${itemId}`, { method: 'DELETE' }),
   close: (tabId: number, payment_method: 'cash' | 'card', tip_cents: number) =>
     req<Tab>(`/tabs/${tabId}/close`, { method: 'POST', body: JSON.stringify({ payment_method, tip_cents }) }),
   delete: (tabId: number) =>
     req<{ id: number }>(`/tabs/${tabId}`, { method: 'DELETE' }),
-  quickPay: (items: Array<{ product_id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number) =>
+  quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number }>, payment_method: 'cash' | 'card', tip_cents: number) =>
     req<Tab>('/tabs/quick-pay', { method: 'POST', body: JSON.stringify({ items, payment_method, tip_cents }) }),
   splitPay: (tabId: number, items: Array<{ id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number) =>
     req<{ paid_tab: Tab; remaining_tab: Tab }>(`/tabs/${tabId}/split-pay`, {

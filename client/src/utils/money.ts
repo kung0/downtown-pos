@@ -12,6 +12,14 @@ export function parseMoney(input: string): number {
   return Math.round(euros * 100);
 }
 
+// Like parseMoney but allows 0 and negative values (for variant price overrides, discounts, etc.)
+export function parseMoneyAny(input: string): number | null {
+  const normalized = input.trim().replace(',', '.');
+  const euros = parseFloat(normalized);
+  if (isNaN(euros)) return null;
+  return Math.round(euros * 100);
+}
+
 export function computeTax(items: Array<{
   price_snapshot_cents: number;
   quantity: number;

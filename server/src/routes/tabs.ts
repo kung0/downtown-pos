@@ -82,18 +82,31 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
   const customerName = `Walk-in · ${berlinTime}`;
 
   // Phase 1: resolve products and compute financials before the async TSE call
-  interface ResolvedItem { product: any; qty: number; }
+  interface ResolvedItem { product: any; qty: number; itemName: string; itemPrice: number; variantId: number | null; }
   const resolvedItems: ResolvedItem[] = [];
 
-  for (const { product_id, quantity = 1 } of items as Array<{ product_id: number; quantity?: number }>) {
+  for (const { product_id, quantity = 1, variant_id } of items as Array<{ product_id: number; quantity?: number; variant_id?: number }>) {
     const qty = Math.max(1, Math.floor(Number(quantity)));
     const product = db.prepare('SELECT * FROM products WHERE id = ?').get(product_id) as any;
     if (!product) return void res.status(404).json({ error: `product ${product_id} not found` });
-    resolvedItems.push({ product, qty });
+
+    let itemName: string = product.name;
+    let itemPrice: number = product.price_cents;
+    let variantId: number | null = null;
+
+    if (variant_id) {
+      const variant = db.prepare('SELECT * FROM product_variants WHERE id = ? AND product_id = ?').get(variant_id, product_id) as any;
+      if (!variant) return void res.status(404).json({ error: `variant ${variant_id} not found` });
+      itemName = `${product.name} (${variant.name})`;
+      itemPrice = product.price_cents + variant.price_cents;
+      variantId = variant.id;
+    }
+
+    resolvedItems.push({ product, qty, itemName, itemPrice, variantId });
   }
 
   const tax = computeTaxBreakdown(resolvedItems.map(r => ({
-    price_snapshot_cents: r.product.price_cents,
+    price_snapshot_cents: r.itemPrice,
     quantity: r.qty,
     tax_category_snapshot: r.product.tax_category,
   })));
@@ -117,12 +130,12 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
     const tabId = Number(lastInsertRowid);
     logEvent('tab_opened', tabId, { customer_name: customerName });
 
-    for (const { product, qty } of resolvedItems) {
+    for (const { product, qty, itemName, itemPrice, variantId } of resolvedItems) {
       db.prepare(`
-        INSERT INTO line_items (tab_id, product_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, 'product', ?)
-      `).run(tabId, product.id, product.name, product.price_cents, product.tax_category, qty, now);
-      logEvent('item_added', tabId, { product_id: product.id, name: product.name, price_cents: product.price_cents, qty });
+        INSERT INTO line_items (tab_id, product_id, variant_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'product', ?)
+      `).run(tabId, product.id, variantId, itemName, itemPrice, product.tax_category, qty, now);
+      logEvent('item_added', tabId, { product_id: product.id, variant_id: variantId, name: itemName, price_cents: itemPrice, qty });
     }
 
     writeClose(tabId, {
@@ -236,7 +249,7 @@ router.patch('/:id/notes', (req: Request, res: Response) => {
 // POST /api/tabs/:id/items — add or increment item
 router.post('/:id/items', (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
-  const { product_id, note, quantity = 1 } = req.body;
+  const { product_id, note, quantity = 1, variant_id } = req.body;
   const qty = Math.max(1, Math.floor(Number(quantity)));
 
   const tabRow = db.prepare("SELECT id FROM tabs WHERE id = ? AND status = 'open'").get(tabId);
@@ -248,20 +261,32 @@ router.post('/:id/items', (req: Request, res: Response) => {
   const now = new Date().toISOString();
   const noteVal = note ?? null;
 
+  let itemName: string = product.name;
+  let itemPrice: number = product.price_cents;
+  let variantIdVal: number | null = null;
+
+  if (variant_id) {
+    const variant = db.prepare('SELECT * FROM product_variants WHERE id = ? AND product_id = ?').get(variant_id, product_id) as any;
+    if (!variant) return void res.status(404).json({ error: 'variant not found' });
+    itemName = `${product.name} (${variant.name})`;
+    itemPrice = product.price_cents + variant.price_cents;
+    variantIdVal = variant.id;
+  }
+
   const existing = db.prepare(
-    "SELECT * FROM line_items WHERE tab_id = ? AND product_id = ? AND (note IS ?) AND kind = 'product'"
-  ).get(tabId, product_id, noteVal) as any;
+    "SELECT * FROM line_items WHERE tab_id = ? AND product_id = ? AND (variant_id IS ?) AND (note IS ?) AND kind = 'product'"
+  ).get(tabId, product_id, variantIdVal, noteVal) as any;
 
   if (existing) {
     db.prepare('UPDATE line_items SET quantity = quantity + ? WHERE id = ?').run(qty, existing.id);
   } else {
     db.prepare(`
-      INSERT INTO line_items (tab_id, product_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'product', ?)
-    `).run(tabId, product_id, product.name, product.price_cents, product.tax_category, qty, noteVal, now);
+      INSERT INTO line_items (tab_id, product_id, variant_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'product', ?)
+    `).run(tabId, product_id, variantIdVal, itemName, itemPrice, product.tax_category, qty, noteVal, now);
   }
 
-  logEvent('item_added', tabId, { product_id, name: product.name, price_cents: product.price_cents, qty });
+  logEvent('item_added', tabId, { product_id, variant_id: variantIdVal, name: itemName, price_cents: itemPrice, qty });
 
   const tab = buildTab(tabId)!;
   broadcast({ type: 'tab:updated', data: tab });

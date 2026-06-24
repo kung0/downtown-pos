@@ -730,6 +730,57 @@ select.field__input { cursor: pointer; }
 }
 .product-card__remove:hover { background: #c53030; }
 
+/* ── Variant picker modal ── */
+.variant-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.variant-picker-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, transform .1s;
+  text-align: center;
+  min-height: 72px;
+}
+.variant-picker-btn:hover { border-color: var(--primary); background: #ebf8ff; }
+.variant-picker-btn:active { transform: scale(0.96); }
+.variant-picker-btn__name { font-size: 15px; font-weight: 600; }
+.variant-picker-btn__price { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* ── Variant admin rows (MenuPage modal) ── */
+.variants-admin-section {
+  margin-top: 4px;
+  padding: 12px;
+  background: var(--surface-2, rgba(0,0,0,.03));
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.variant-admin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variant-admin-row--draft {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── Cart bar (no-tab product grid) ── */
 .cart-bar {
   background: var(--surface);

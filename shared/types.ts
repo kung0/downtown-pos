@@ -14,6 +14,16 @@ export type PaymentMethod = 'cash' | 'card';
 export type LineItemKind = 'product' | 'billiard';
 export type PoolTableStatus = 'free' | 'in_use';
 
+export interface ProductVariant {
+  id: number;
+  product_id: number;
+  name: string;
+  price_cents: number;
+  available: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface Product {
   id: number;
   name: string;
@@ -21,15 +31,18 @@ export interface Product {
   price_cents: number;
   tax_category: TaxCategory;
   available: boolean;
+  has_variants: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
+  variants?: ProductVariant[];
 }
 
 export interface LineItem {
   id: number;
   tab_id: number;
   product_id: number | null;
+  variant_id: number | null;
   name_snapshot: string;
   price_snapshot_cents: number;
   tax_category_snapshot: TaxCategory;

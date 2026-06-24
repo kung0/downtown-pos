@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Tab, Product, Category, WSMessage } from '@downtown/shared';
+import type { Tab, Product, ProductVariant, Category, WSMessage } from '@downtown/shared';
 import { tabsApi, productsApi, categoriesApi, printerApi } from '../api';
 import { subscribe } from '../lib/liveUpdates';
 
@@ -28,7 +28,15 @@ function fmtDuration(startIso: string, endIso: string): string {
 }
 
 
-interface CartItem { product: Product; quantity: number; note?: string; _key: number; }
+interface CartItem {
+  product: Product;
+  quantity: number;
+  note?: string;
+  _key: number;
+  variantId?: number;
+  variantName?: string;
+  variantPrice?: number;
+}
 
 interface Props { jumpTabId?: number | null; onJumpConsumed?: () => void; }
 
@@ -76,6 +84,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [cartExpanded, setCartExpanded] = useState(false);
   const [printOrders, setPrintOrders] = useState(() => localStorage.getItem('printOrders') !== '0');
   const [printError, setPrintError] = useState<{ customerName: string; message: string } | null>(null);
+  const [variantPicker, setVariantPicker] = useState<Product | null>(null);
 
   const newTabInputRef = useRef<HTMLInputElement>(null);
   const productSearchRef = useRef<HTMLInputElement>(null);
@@ -84,10 +93,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   // ── cart helpers ──────────────────────────────────────────────
   const cartQty   = (id: number) => cart.filter(c => c.product.id === id).reduce((s, c) => s + c.quantity, 0);
-  const cartTotal = cart.reduce((s, c) => s + c.product.price_cents * c.quantity, 0);
+  const cartTotal = cart.reduce((s, c) => s + (c.variantPrice ?? c.product.price_cents) * c.quantity, 0);
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
   function cartAdd(product: Product) {
+    if (product.has_variants) {
+      setVariantPicker(product);
+      return;
+    }
     const unnoted = cart.find(c => c.product.id === product.id && !c.note);
     if (unnoted) {
       setHighlightedKey(unnoted._key);
@@ -97,6 +110,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setHighlightedKey(k);
       setCart(prev => [...prev, { product, quantity: 1, _key: k }]);
     }
+  }
+
+  function cartAddVariant(product: Product, variant: ProductVariant) {
+    const existing = cart.find(c => c.product.id === product.id && c.variantId === variant.id && !c.note);
+    if (existing) {
+      setHighlightedKey(existing._key);
+      setCart(prev => prev.map(c => c._key === existing._key ? { ...c, quantity: c.quantity + 1 } : c));
+    } else {
+      const k = cartKeyRef.current++;
+      setHighlightedKey(k);
+      setCart(prev => [...prev, { product, quantity: 1, variantId: variant.id, variantName: variant.name, variantPrice: product.price_cents + variant.price_cents, _key: k }]);
+    }
+    setVariantPicker(null);
   }
 
   function cartRemove(productId: number) {
@@ -131,7 +157,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   // ── order ticket printing ─────────────────────────────────────
   type OrderLine = { name: string; quantity: number; note?: string | null };
   const cartOrderLines = (): OrderLine[] =>
-    cart.map(c => ({ name: c.product.name, quantity: c.quantity, note: c.note ?? null }));
+    cart.map(c => ({
+      name: c.variantName ? `${c.product.name} (${c.variantName})` : c.product.name,
+      quantity: c.quantity,
+      note: c.note ?? null,
+    }));
 
   function togglePrintOrders(v: boolean) {
     setPrintOrders(v);
@@ -194,6 +224,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       } else if (msg.type === 'tab:tse_signed') {
         const tab = msg.data as Tab;
         setReceipt(prev => prev?.id === tab.id ? tab : prev);
+      } else if (msg.type === 'menu:product_updated') {
+        const product = msg.data as Product;
+        setProducts(prev => prev.map(p => p.id === product.id ? product : p));
       } else if (msg.type === 'pool:tick') {
         const d = msg.data as { session_id: number; elapsed_seconds: number; running_cost_cents: number };
         setSessionTicks(prev => ({ ...prev, [d.session_id]: { elapsed_seconds: d.elapsed_seconds, running_cost_cents: d.running_cost_cents } }));
@@ -246,15 +279,15 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
     try {
       let updated: Tab | undefined;
-      for (const { product, quantity, note } of cart) {
-        updated = await tabsApi.addItem(selectedId, product.id, quantity, note);
+      for (const { product, quantity, note, variantId } of cart) {
+        updated = await tabsApi.addItem(selectedId, product.id, quantity, note, variantId);
       }
       for (const item of (selectedTab?.items ?? [])) {
         const staged = itemQtyOverrides[item.id];
         if (staged === undefined || staged === item.quantity) continue;
         const delta = staged - item.quantity;
         if (delta > 0) {
-          updated = await tabsApi.addItem(selectedId, item.product_id!, delta);
+          updated = await tabsApi.addItem(selectedId, item.product_id!, delta, undefined, item.variant_id ?? undefined);
         } else {
           for (let i = 0; i < Math.abs(delta); i++) {
             updated = await tabsApi.removeItem(selectedId, item.id);
@@ -283,7 +316,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   async function handleDirectPay() {
     if (directPaying || cartCount === 0) return;
     const tipCents = parseMoney(directPayTip);
-    const items    = cart.map(c => ({ product_id: c.product.id, quantity: c.quantity }));
+    const items    = cart.map(c => ({ product_id: c.product.id, quantity: c.quantity, variant_id: c.variantId }));
     const orderLines = cartOrderLines();
 
     setDirectPaying(true);
@@ -312,8 +345,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setCreating(true);
     try {
       let currentTab = await tabsApi.create(newTabName.trim(), newTabNotes.trim() || undefined);
-      for (const { product, quantity, note } of cart) {
-        currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity, note);
+      for (const { product, quantity, note, variantId } of cart) {
+        currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity, note, variantId);
       }
       firePrintOrder(currentTab.customer_name, orderLines);
       setTabs(prev => {
@@ -340,8 +373,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     const orderLines = cartOrderLines();
     try {
       let currentTab: Tab | undefined;
-      for (const { product, quantity, note } of cart) {
-        currentTab = await tabsApi.addItem(tabId, product.id, quantity, note);
+      for (const { product, quantity, note, variantId } of cart) {
+        currentTab = await tabsApi.addItem(tabId, product.id, quantity, note, variantId);
       }
       if (currentTab) {
         updateTab(currentTab);
@@ -519,6 +552,10 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             .reduce((s, i) => s + i.quantity, 0)
         : 0;
       const totalQty = committedQty + stagedQty;
+      const availableVariants = (p.variants ?? []).filter(v => v.available);
+      const minVariantPrice = availableVariants.length > 0
+        ? Math.min(...availableVariants.map(v => p.price_cents + v.price_cents))
+        : null;
       return (
         <div
           key={p.id}
@@ -535,8 +572,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             <span className="product-card__note-icon">📝</span>
           )}
           <div className="product-card__name">{p.name}</div>
-          <div className="product-card__price">{formatMoney(p.price_cents)}</div>
-          {stagedQty > 0 && (
+          <div className="product-card__price">
+            {p.has_variants && minVariantPrice !== null
+              ? `ab ${formatMoney(minVariantPrice)}`
+              : formatMoney(p.price_cents)}
+          </div>
+          {!p.has_variants && stagedQty > 0 && (
             <button
               className="product-card__remove"
               onMouseDown={e => e.preventDefault()}
@@ -1532,7 +1573,32 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         </div>
       )}
 
-      {/* ── Add note modal ──────────────────────────────────── */}
+      {/* ── Variant picker ──────────────────────────────────────── */}
+      {variantPicker && (
+        <div className="modal-overlay" onClick={() => setVariantPicker(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal__header">
+              <h2 className="modal__title">{variantPicker.name}</h2>
+              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setVariantPicker(null)}>✕</button>
+            </div>
+            <div className="modal__body">
+              <div className="variant-picker-grid">
+                {(variantPicker.variants ?? []).filter(v => v.available).map(v => (
+                  <button
+                    key={v.id}
+                    className="variant-picker-btn"
+                    onClick={() => cartAddVariant(variantPicker, v)}
+                  >
+                    <div className="variant-picker-btn__name">{v.name}</div>
+                    <div className="variant-picker-btn__price">{formatMoney(variantPicker.price_cents + v.price_cents)}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {noteModal && (
         <div className="modal-overlay" onClick={() => setNoteModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
