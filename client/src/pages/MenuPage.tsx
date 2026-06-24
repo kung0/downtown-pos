@@ -6,6 +6,11 @@ import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../ut
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+function formatDelta(cents: number): string {
+  if (cents === 0) return 'gratis';
+  return (cents > 0 ? '+' : '') + formatMoney(cents);
+}
+
 interface TreeNode {
   cat: Category;
   children: TreeNode[];
@@ -507,7 +512,7 @@ export default function MenuPage() {
                         {v.name}
                       </span>
                       <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>
-                        {formatMoney(v.price_cents)}
+                        {formatDelta(v.price_cents)}
                       </span>
                       <button
                         className="btn btn--ghost btn--sm btn--danger-text"

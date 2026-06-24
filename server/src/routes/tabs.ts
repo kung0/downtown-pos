@@ -98,7 +98,7 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
       const variant = db.prepare('SELECT * FROM product_variants WHERE id = ? AND product_id = ?').get(variant_id, product_id) as any;
       if (!variant) return void res.status(404).json({ error: `variant ${variant_id} not found` });
       itemName = `${product.name} (${variant.name})`;
-      itemPrice = product.price_cents + variant.price_cents;
+      itemPrice = variant.price_cents;
       variantId = variant.id;
     }
 
