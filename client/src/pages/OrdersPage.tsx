@@ -179,17 +179,20 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     });
   }
 
-  function renderPrintToggle() {
+  function renderPrintToggle(noteButton?: JSX.Element) {
     return (
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', marginBottom: 6 }}>
-        <input
-          type="checkbox"
-          checked={!printOrders}
-          onChange={e => togglePrintOrders(!e.target.checked)}
-          style={{ width: 15, height: 15, cursor: 'pointer' }}
-        />
-        <span>Don't print ticket</span>
-      </label>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={!printOrders}
+            onChange={e => togglePrintOrders(!e.target.checked)}
+            style={{ width: 15, height: 15, cursor: 'pointer' }}
+          />
+          <span>Don't print ticket</span>
+        </label>
+        {noteButton}
+      </div>
     );
   }
 
@@ -708,10 +711,10 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{cartExpanded ? '▲' : '▼'}</span>
                 </div>
                 {cartExpanded && renderCartDetail()}
-                {highlightedKey !== null && (
+                {renderPrintToggle(highlightedKey !== null ? (
                   <button
                     className="btn btn--ghost btn--sm"
-                    style={{ width: '100%', marginBottom: 8 }}
+                    style={{ fontSize: 14, padding: '5px 14px' }}
                     onClick={() => {
                       const entry = cart.find(c => c._key === highlightedKey);
                       setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
@@ -719,8 +722,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   >
                     + note
                   </button>
-                )}
-                {renderPrintToggle()}
+                ) : undefined)}
                 <div className="cart-bar__actions">
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={openDirectPay}>
                     Pay now
@@ -869,20 +871,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     {cartCount > 0 && `${cartCount} new`}{cartCount > 0 && hasOverrides && ' · '}{hasOverrides && 'qty changes'}
                   </span>
                   {cartCount > 0 && <span className="cart-bar__total">{formatMoney(cartTotal)}</span>}
-                  {cartCount > 0 && highlightedKey !== null && (
-                    <button
-                      className="btn btn--ghost btn--sm"
-                      style={{ fontSize: 12 }}
-                      onClick={() => {
-                        const entry = cart.find(c => c._key === highlightedKey);
-                        setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
-                      }}
-                    >
-                      + note
-                    </button>
-                  )}
                 </div>
-                {renderPrintToggle()}
+                {renderPrintToggle(cartCount > 0 && highlightedKey !== null ? (
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    style={{ fontSize: 14, padding: '5px 14px' }}
+                    onClick={() => {
+                      const entry = cart.find(c => c._key === highlightedKey);
+                      setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
+                    }}
+                  >
+                    + note
+                  </button>
+                ) : undefined)}
                 <div className="cart-bar__actions">
                   <button className="btn btn--ghost" onClick={() => { setCart([]); setItemQtyOverrides({}); }}>Discard</button>
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
@@ -952,10 +953,10 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{cartExpanded ? '▲' : '▼'}</span>
                 </div>
                 {cartExpanded && renderCartDetail()}
-                {highlightedKey !== null && (
+                {renderPrintToggle(highlightedKey !== null ? (
                   <button
                     className="btn btn--ghost btn--sm"
-                    style={{ width: '100%', marginBottom: 8 }}
+                    style={{ fontSize: 14, padding: '5px 14px' }}
                     onClick={() => {
                       const entry = cart.find(c => c._key === highlightedKey);
                       setNoteModal({ productName: entry?.product.name ?? '', input: entry?.note ?? '' });
@@ -963,8 +964,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   >
                     + note
                   </button>
-                )}
-                {renderPrintToggle()}
+                ) : undefined)}
                 <div className="cart-bar__actions">
                   <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
                 </div>
