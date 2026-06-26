@@ -37,3 +37,4 @@ server/*.db-wal
 # Test output
 test-results/
 playwright-report/
+.superpowers/
