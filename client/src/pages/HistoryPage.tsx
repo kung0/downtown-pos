@@ -6,6 +6,8 @@ import { formatDateTime } from '../utils/time';
 import { formatMoney } from '../utils/money';
 import { useSession } from '../context/SessionContext';
 
+const TERMINAL_TAB_EVENTS = new Set<WSMessage['type']>(['tab:closed', 'tab:voided', 'tab:deleted']);
+
 export default function HistoryPage() {
   const { session }               = useSession();
   const [tabs, setTabs]           = useState<Tab[]>([]);
@@ -30,7 +32,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {
-      if (msg.type === 'tab:closed' || msg.type === 'tab:voided' || msg.type === 'tab:deleted') {
+      if (TERMINAL_TAB_EVENTS.has(msg.type)) {
         const incoming = msg.data as Tab;
         if (sessionId == null || incoming.session_id === sessionId) {
           setTabs(prev => {
@@ -94,8 +96,6 @@ export default function HistoryPage() {
 
 function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean; onToggle: () => void }) {
   const closedAt = tab.closed_at ?? tab.voided_at ?? tab.deleted_at;
-  const isVoided = tab.status === 'voided';
-  const isDeleted = tab.status === 'deleted';
   const [printing, setPrinting] = useState(false);
   const [printMsg, setPrintMsg] = useState('');
 
@@ -146,8 +146,8 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             {closedAt ? formatDateTime(closedAt) : '—'}
           </div>
         </div>
-        <span className={`badge ${isVoided || isDeleted ? 'badge--gray' : 'badge--green'}`}>
-          {isVoided ? 'voided' : isDeleted ? 'deleted' : 'closed'}
+        <span className={`badge ${tab.status === 'closed' ? 'badge--green' : 'badge--gray'}`}>
+          {tab.status}
         </span>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontWeight: 600, fontSize: '14px' }}>
@@ -213,7 +213,7 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
               Note: {tab.notes}
             </p>
           )}
-          {isVoided && tab.void_reason && (
+          {tab.status === 'voided' && tab.void_reason && (
             <p style={{ marginTop: '10px', fontSize: '13px', color: 'var(--danger)' }}>
               Void reason: {tab.void_reason}
             </p>
@@ -224,7 +224,7 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             </p>
           )}
 
-          {!isDeleted && (
+          {tab.status !== 'deleted' && (
             <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <button
                 className="btn"
