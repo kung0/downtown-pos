@@ -188,8 +188,8 @@ export function summarizeClosedTabs(closed: any[]) {
       SUM(li.price_snapshot_cents * li.quantity) as total_cents
     FROM line_items li
     WHERE li.tab_id IN (${ph})
-    GROUP BY category
-    ORDER BY total_cents DESC
+    GROUP BY 1
+    ORDER BY 2 DESC
   `).all(...ids) as Array<{ category: string; total_cents: number }>;
 
   const top_drinks = ids.length === 0 ? [] : db.prepare(`

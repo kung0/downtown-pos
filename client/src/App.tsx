@@ -21,10 +21,9 @@ const NAV: { id: Page; label: string }[] = [
   { id: 'settings', label: 'Settings' },
 ];
 
-function AppInner() {
+function AppInner({ onCloseShift }: { onCloseShift: () => void }) {
   const [page, setPage]           = useState<Page>('orders');
   const [jumpTabId, setJumpTabId] = useState<number | null>(null);
-  const [showClose, setShowClose] = useState(false);
   const { session } = useSession();
 
   const openTab = useCallback((tabId: number) => {
@@ -56,7 +55,7 @@ function AppInner() {
             </span>
             <button
               className="btn btn--ghost btn--sm"
-              onClick={() => setShowClose(true)}
+              onClick={onCloseShift}
             >
               Close Shift
             </button>
@@ -71,17 +70,29 @@ function AppInner() {
         <div style={{ display: page === 'reports'  ? undefined : 'none' }}><ReportsPage /></div>
         <div style={{ display: page === 'settings' ? undefined : 'none' }}><SettingsPage /></div>
       </main>
-      {showClose && <CloseShiftModal onClose={() => setShowClose(false)} />}
     </div>
+  );
+}
+
+// CloseShiftModal lives outside ShiftGate so it stays mounted when the
+// session transitions to 'closed' (ShiftGate would otherwise unmount AppInner
+// before the user can read the shift summary).
+function AppWithClose() {
+  const [showClose, setShowClose] = useState(false);
+  return (
+    <>
+      <ShiftGate>
+        <AppInner onCloseShift={() => setShowClose(true)} />
+      </ShiftGate>
+      {showClose && <CloseShiftModal onClose={() => setShowClose(false)} />}
+    </>
   );
 }
 
 export default function App() {
   return (
     <SessionProvider>
-      <ShiftGate>
-        <AppInner />
-      </ShiftGate>
+      <AppWithClose />
     </SessionProvider>
   );
 }
