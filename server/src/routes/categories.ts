@@ -55,6 +55,39 @@ router.post('/', (req: Request, res: Response) => {
   res.status(201).json(row);
 });
 
+// PATCH /api/categories/reorder
+router.patch('/reorder', (req: Request, res: Response) => {
+  const items = req.body as Array<{ id: number; sort_order: number; parent_id: number | null }>;
+  if (!Array.isArray(items) || items.length === 0) {
+    return void res.status(400).json({ error: 'body must be a non-empty array' });
+  }
+
+  // Build proposed parent map for cycle detection
+  const parentMap = new Map<number, number | null>(items.map(i => [i.id, i.parent_id]));
+
+  for (const item of items) {
+    const seen = new Set<number>();
+    let cursor = item.parent_id;
+    while (cursor !== null) {
+      if (cursor === item.id) {
+        return void res.status(400).json({ error: 'circular reference detected' });
+      }
+      if (seen.has(cursor)) break;
+      seen.add(cursor);
+      cursor = parentMap.has(cursor) ? (parentMap.get(cursor) ?? null) : null;
+    }
+  }
+
+  const stmt = db.prepare('UPDATE categories SET sort_order = ?, parent_id = ? WHERE id = ?');
+  db.transaction(() => {
+    for (const item of items) {
+      stmt.run(item.sort_order, item.parent_id, item.id);
+    }
+  })();
+
+  res.status(204).send();
+});
+
 // PUT /api/categories/:id
 router.put('/:id', (req: Request, res: Response) => {
   const id = Number(req.params.id);
