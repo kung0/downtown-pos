@@ -82,7 +82,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [highlightedKey, setHighlightedKey] = useState<number | null>(null);
   const [noteModal, setNoteModal] = useState<{ productName: string; input: string } | null>(null);
   const [cartExpanded, setCartExpanded] = useState(false);
-  const [printOrders, setPrintOrders] = useState(() => localStorage.getItem('printOrders') !== '0');
+  const [printOrders, setPrintOrders] = useState(true);
   const [printError, setPrintError] = useState<{ customerName: string; message: string } | null>(null);
   const [variantPicker, setVariantPicker] = useState<Product | null>(null);
 
@@ -165,7 +165,6 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   function togglePrintOrders(v: boolean) {
     setPrintOrders(v);
-    localStorage.setItem('printOrders', v ? '1' : '0');
   }
 
   // Fire-and-forget: the order ticket is a side effect; a missing/offline
