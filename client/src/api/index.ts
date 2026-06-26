@@ -11,6 +11,7 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((body as { error?: string }).error ?? res.statusText);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -21,6 +22,18 @@ export interface CategoryInput {
   sort_order?: number;
 }
 
+export interface ProductReorderItem {
+  id: number;
+  sort_order: number;
+  category: string;
+}
+
+export interface CategoryReorderItem {
+  id: number;
+  sort_order: number;
+  parent_id: number | null;
+}
+
 export const categoriesApi = {
   list: () => req<Category[]>('/categories'),
   create: (data: CategoryInput) =>
@@ -29,6 +42,8 @@ export const categoriesApi = {
     req<Category>(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: number) =>
     req<{ id: number }>(`/categories/${id}`, { method: 'DELETE' }),
+  reorder: (items: CategoryReorderItem[]) =>
+    req<void>('/categories/reorder', { method: 'PATCH', body: JSON.stringify(items) }),
 };
 
 export interface ProductInput {
@@ -47,6 +62,8 @@ export const productsApi = {
     req<Product>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   toggleAvailability: (id: number) =>
     req<Product>(`/products/${id}/availability`, { method: 'PATCH' }),
+  reorder: (items: ProductReorderItem[]) =>
+    req<void>('/products/reorder', { method: 'PATCH', body: JSON.stringify(items) }),
 };
 
 export interface ProductVariantInput {
