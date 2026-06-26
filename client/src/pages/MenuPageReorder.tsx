@@ -1,4 +1,4 @@
-import { useDroppable } from '@dnd-kit/core';
+import { useDroppable, DragOverlay } from '@dnd-kit/core';
 import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { Product, Category } from '@downtown/shared';
 import { formatMoney } from '../utils/money';
@@ -106,6 +106,84 @@ export function ReorderProductsView({ draftProducts, categories }: ReorderProduc
           </ProductDropZone>
         </div>
       )}
+    </>
+  );
+}
+
+// ── SortableCategoryRow ──────────────────────────────────────────────────────
+
+interface SortableCategoryRowProps {
+  cat: Category;
+  depth: number;
+}
+
+export function SortableCategoryRow({ cat, depth }: SortableCategoryRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: cat.id,
+  });
+  const style: React.CSSProperties = {
+    transform: transform
+      ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)`
+      : undefined,
+    transition,
+    opacity: isDragging ? 0.2 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`cat-row${depth === 0 ? ' cat-row--root' : ''}`}
+    >
+      <span className="drag-handle" {...attributes} {...listeners}>⠿</span>
+      {depth > 0 && <div className="cat-row__spacer" style={{ width: depth * 20 }} />}
+      <span className="cat-row__name">{cat.name}</span>
+      <span className={`cat-tax-badge cat-tax-badge--${cat.tax_category}`}>
+        {cat.tax_category === 'reduced' ? '7 %' : '19 %'}
+      </span>
+    </div>
+  );
+}
+
+// ── ReorderCategoriesView ────────────────────────────────────────────────────
+
+interface ReorderCategoriesViewProps {
+  draftCategories: Category[];
+  dragActiveId: number | null;
+  dragDepth: number;
+}
+
+export function ReorderCategoriesView({
+  draftCategories,
+  dragActiveId,
+  dragDepth,
+}: ReorderCategoriesViewProps) {
+  const flat = flattenTree(buildTree(draftCategories));
+  const activeCat = dragActiveId != null ? draftCategories.find(c => c.id === dragActiveId) : null;
+
+  return (
+    <>
+      <div className="cat-list">
+        <SortableContext items={flat.map(fc => fc.cat.id)} strategy={verticalListSortingStrategy}>
+          {flat.map(({ cat, depth }) => (
+            <SortableCategoryRow key={cat.id} cat={cat} depth={depth} />
+          ))}
+        </SortableContext>
+      </div>
+      <DragOverlay>
+        {activeCat != null ? (
+          <div className={`cat-row${dragDepth === 0 ? ' cat-row--root' : ''}`}
+            style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.15)', cursor: 'grabbing' }}
+          >
+            <span className="drag-handle">⠿</span>
+            {dragDepth > 0 && <div className="cat-row__spacer" style={{ width: dragDepth * 20 }} />}
+            <span className="cat-row__name">{activeCat.name}</span>
+            <span className={`cat-tax-badge cat-tax-badge--${activeCat.tax_category}`}>
+              {activeCat.tax_category === 'reduced' ? '7 %' : '19 %'}
+            </span>
+          </div>
+        ) : null}
+      </DragOverlay>
     </>
   );
 }

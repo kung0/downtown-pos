@@ -5,9 +5,10 @@ import type { CategoryInput } from '../api';
 import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../utils/money';
 import { buildTree, flattenTree, findNode, collectDescendantIds } from '../utils/categoryTree';
 import type { TreeNode } from '../utils/categoryTree';
-import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
-import { ReorderProductsView } from './MenuPageReorder';
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent, DragMoveEvent } from '@dnd-kit/core';
+import { ReorderProductsView, ReorderCategoriesView } from './MenuPageReorder';
+import { applyCategoryReorder, detectCycle } from '../utils/categoryTree';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,8 @@ export default function MenuPage() {
   const [draftCategories,  setDraftCategories]   = useState<Category[]>([]);
   const [savingOrder,      setSavingOrder]       = useState(false);
   const [reorderError,     setReorderError]      = useState<string | null>(null);
+  const [dragActiveId,     setDragActiveId]      = useState<number | null>(null);
+  const [dragDepth,        setDragDepth]         = useState(0);
 
   // category modal
   const [showCatModal, setShowCatModal] = useState(false);
@@ -180,7 +183,54 @@ export default function MenuPage() {
     }
   }
 
-  async function handleSaveCategoryOrder() { /* Task 8 */ }
+  function onCatDragStart(event: DragStartEvent) {
+    const id = event.active.id as number;
+    setDragActiveId(id);
+    const flat = flattenTree(buildTree(draftCategories));
+    setDragDepth(flat.find(fc => fc.cat.id === id)?.depth ?? 0);
+  }
+
+  function onCatDragMove(event: DragMoveEvent) {
+    if (dragActiveId === null) return;
+    const flat = flattenTree(buildTree(draftCategories));
+    const baseDepth = flat.find(fc => fc.cat.id === dragActiveId)?.depth ?? 0;
+    // 30px per indent level — feels natural on both pointer and touch
+    const newDepth = Math.max(0, baseDepth + Math.round(event.delta.x / 30));
+    setDragDepth(newDepth);
+  }
+
+  function onCatDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setDragActiveId(null);
+
+    if (!over) { setDragDepth(0); return; }
+
+    const activeId = active.id as number;
+    const overId = active.id === over.id ? null : (over.id as number);
+
+    setDraftCategories(prev => applyCategoryReorder(prev, activeId, overId, dragDepth));
+    setDragDepth(0);
+  }
+
+  async function handleSaveCategoryOrder() {
+    if (detectCycle(draftCategories)) {
+      setReorderError('Reihenfolge erzeugt eine kreisförmige Referenz. Bitte neu anordnen.');
+      return;
+    }
+    setSavingOrder(true);
+    setReorderError(null);
+    try {
+      await categoriesApi.reorder(
+        draftCategories.map(c => ({ id: c.id, sort_order: c.sort_order, parent_id: c.parent_id }))
+      );
+      setCategories(draftCategories);
+      setIsReordering(false);
+    } catch (e) {
+      setReorderError((e as Error).message);
+    } finally {
+      setSavingOrder(false);
+    }
+  }
 
   function openCreateProduct() {
     setEditingProduct(null);
@@ -511,24 +561,40 @@ export default function MenuPage() {
 
       {/* ════════════════ CATEGORIES VIEW ════════════════ */}
       {view === 'categories' && (
-        <div className="cat-list">
-          {catTree.length === 0 ? (
-            <p className="cat-list__empty">Noch keine Kategorien — oben „+ Kategorie" klicken.</p>
-          ) : flatCats.map(({ cat, depth }) => (
-            <div key={cat.id} className={`cat-row${depth === 0 ? ' cat-row--root' : ''}`}>
-              {depth > 0 && <div className="cat-row__spacer" style={{ width: depth * 20 }} />}
-              <span className="cat-row__name">{cat.name}</span>
-              <span className={`cat-tax-badge cat-tax-badge--${cat.tax_category}`}>
-                {cat.tax_category === 'reduced' ? '7 %' : '19 %'}
-              </span>
-              <div className="cat-row__actions">
-                <button className="btn btn--ghost btn--sm" onClick={() => openCreateCat(cat.id)}>+ Sub</button>
-                <button className="btn btn--ghost btn--sm" onClick={() => openEditCat(cat)}>Edit</button>
-                <button className="btn btn--ghost btn--sm btn--danger-text" onClick={() => handleDeleteCat(findNode(catTree, cat.id)!)}>Delete</button>
+        isReordering ? (
+          <DndContext
+            sensors={dndSensors}
+            collisionDetection={closestCenter}
+            onDragStart={onCatDragStart}
+            onDragMove={onCatDragMove}
+            onDragEnd={onCatDragEnd}
+          >
+            <ReorderCategoriesView
+              draftCategories={draftCategories}
+              dragActiveId={dragActiveId}
+              dragDepth={dragDepth}
+            />
+          </DndContext>
+        ) : (
+          <div className="cat-list">
+            {catTree.length === 0 ? (
+              <p className="cat-list__empty">Noch keine Kategorien — oben „+ Kategorie" klicken.</p>
+            ) : flatCats.map(({ cat, depth }) => (
+              <div key={cat.id} className={`cat-row${depth === 0 ? ' cat-row--root' : ''}`}>
+                {depth > 0 && <div className="cat-row__spacer" style={{ width: depth * 20 }} />}
+                <span className="cat-row__name">{cat.name}</span>
+                <span className={`cat-tax-badge cat-tax-badge--${cat.tax_category}`}>
+                  {cat.tax_category === 'reduced' ? '7 %' : '19 %'}
+                </span>
+                <div className="cat-row__actions">
+                  <button className="btn btn--ghost btn--sm" onClick={() => openCreateCat(cat.id)}>+ Sub</button>
+                  <button className="btn btn--ghost btn--sm" onClick={() => openEditCat(cat)}>Edit</button>
+                  <button className="btn btn--ghost btn--sm btn--danger-text" onClick={() => handleDeleteCat(findNode(catTree, cat.id)!)}>Delete</button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )
       )}
 
       {/* ════════════════ PRODUCT MODAL ════════════════ */}
