@@ -71,6 +71,41 @@ router.post('/', (req: Request, res: Response) => {
   res.status(201).json(product);
 });
 
+router.patch('/reorder', (req: Request, res: Response) => {
+  const items = req.body as Array<{ id: number; sort_order: number; category: string }>;
+  if (!Array.isArray(items) || items.length === 0) {
+    return void res.status(400).json({ error: 'body must be a non-empty array' });
+  }
+
+  // Validate all categories exist up front
+  for (const item of items) {
+    if (!resolveCategory(item.category)) {
+      return void res.status(400).json({ error: `invalid category: ${item.category}` });
+    }
+  }
+
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    'UPDATE products SET sort_order = ?, category = ?, tax_category = ?, updated_at = ? WHERE id = ?'
+  );
+
+  db.transaction(() => {
+    for (const item of items) {
+      const cat = resolveCategory(item.category)!;
+      stmt.run(item.sort_order, item.category, cat.tax_category, now, item.id);
+    }
+  })();
+
+  const updated = items.map(({ id }) =>
+    attachVariants([normalize(db.prepare('SELECT * FROM products WHERE id = ?').get(id)!)])[0]
+  );
+  for (const product of updated) {
+    broadcast({ type: 'menu:product_updated', data: product });
+  }
+
+  res.status(204).send();
+});
+
 router.put('/:id', (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const { name, category, price_cents, has_variants, sort_order = 0 } = req.body;
