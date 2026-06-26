@@ -7,7 +7,7 @@ interface TabRow {
   closed_at: string | null; payment_method: string | null; subtotal_cents: number | null;
   tip_cents: number; total_cents: number | null; tax_cents: number | null;
   tax_standard_cents: number | null; tax_reduced_cents: number | null;
-  void_reason: string | null; voided_at: string | null; original_tab_id: number | null;
+  void_reason: string | null; voided_at: string | null; deleted_at: string | null; original_tab_id: number | null;
   card_auth_code: string | null; card_masked_pan: string | null;
   tse_signature: string | null; tse_start_time: string | null; tse_timestamp: string | null;
   tse_transaction_number: string | null; tse_signature_counter: number | null;

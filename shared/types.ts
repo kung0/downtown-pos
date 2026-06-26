@@ -9,7 +9,7 @@ export interface Category {
   created_at: string;
 }
 export type TaxCategory = 'standard' | 'reduced';
-export type TabStatus = 'open' | 'closed' | 'voided';
+export type TabStatus = 'open' | 'closed' | 'voided' | 'deleted';
 export type PaymentMethod = 'cash' | 'card';
 export type LineItemKind = 'product' | 'billiard';
 export type PoolTableStatus = 'free' | 'in_use';
@@ -71,6 +71,7 @@ export interface Tab {
   tax_reduced_cents: number | null;
   void_reason: string | null;
   voided_at: string | null;
+  deleted_at: string | null;
   original_tab_id: number | null;
   card_auth_code: string | null;
   card_masked_pan: string | null;

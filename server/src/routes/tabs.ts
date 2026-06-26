@@ -173,12 +173,12 @@ router.get('/history', (req: Request, res: Response) => {
     rows = db.prepare(
       `SELECT * FROM tabs
        WHERE status != 'open' AND session_id = ?
-       ORDER BY COALESCE(closed_at, voided_at) DESC`
+       ORDER BY COALESCE(closed_at, voided_at, deleted_at) DESC`
     ).all(session_id) as any[];
   } else {
     rows = db.prepare(
       `SELECT * FROM tabs WHERE status != 'open'
-       ORDER BY COALESCE(closed_at, voided_at) DESC LIMIT 500`
+       ORDER BY COALESCE(closed_at, voided_at, deleted_at) DESC LIMIT 500`
     ).all() as any[];
   }
 
@@ -338,14 +338,14 @@ router.delete('/:id', (req: Request, res: Response) => {
     'SELECT name_snapshot, price_snapshot_cents, quantity FROM line_items WHERE tab_id = ?'
   ).all(tabId) as Array<{ name_snapshot: string; price_snapshot_cents: number; quantity: number }>;
 
+  const now = new Date().toISOString();
   logEvent('tab_deleted', tabId, { customer_name: tabRow.customer_name, items: deletedItems });
 
   db.prepare('UPDATE waitlist SET tab_id = NULL WHERE tab_id = ?').run(tabId);
-  db.prepare('DELETE FROM billiard_sessions WHERE tab_id = ?').run(tabId);
-  db.prepare('DELETE FROM line_items WHERE tab_id = ?').run(tabId);
-  db.prepare('DELETE FROM tabs WHERE id = ?').run(tabId);
+  db.prepare("UPDATE tabs SET status = 'deleted', deleted_at = ? WHERE id = ?").run(now, tabId);
 
-  broadcast({ type: 'tab:deleted', data: { id: tabId } });
+  const deletedTab = buildTab(tabId)!;
+  broadcast({ type: 'tab:deleted', data: deletedTab });
   res.json({ id: tabId });
 });
 

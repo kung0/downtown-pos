@@ -30,7 +30,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {
-      if (msg.type === 'tab:closed' || msg.type === 'tab:voided') {
+      if (msg.type === 'tab:closed' || msg.type === 'tab:voided' || msg.type === 'tab:deleted') {
         const incoming = msg.data as Tab;
         if (sessionId == null || incoming.session_id === sessionId) {
           setTabs(prev => {
@@ -93,8 +93,9 @@ export default function HistoryPage() {
 }
 
 function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean; onToggle: () => void }) {
-  const closedAt = tab.closed_at ?? tab.voided_at;
+  const closedAt = tab.closed_at ?? tab.voided_at ?? tab.deleted_at;
   const isVoided = tab.status === 'voided';
+  const isDeleted = tab.status === 'deleted';
   const [printing, setPrinting] = useState(false);
   const [printMsg, setPrintMsg] = useState('');
 
@@ -145,8 +146,8 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             {closedAt ? formatDateTime(closedAt) : '—'}
           </div>
         </div>
-        <span className={`badge ${isVoided ? 'badge--gray' : 'badge--green'}`}>
-          {isVoided ? 'voided' : 'closed'}
+        <span className={`badge ${isVoided || isDeleted ? 'badge--gray' : 'badge--green'}`}>
+          {isVoided ? 'voided' : isDeleted ? 'deleted' : 'closed'}
         </span>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontWeight: 600, fontSize: '14px' }}>
@@ -223,29 +224,31 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             </p>
           )}
 
-          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              className="btn"
-              style={{ fontSize: '13px', padding: '5px 12px' }}
-              onClick={handlePrint}
-              disabled={printing}
-            >
-              {printing ? 'Printing…' : 'Print receipt'}
-            </button>
-            <button
-              className="btn"
-              style={{ fontSize: '13px', padding: '5px 12px' }}
-              onClick={e => handlePrint(e, true)}
-              disabled={printing}
-            >
-              {printing ? 'Printing…' : 'Print + Bewirtung'}
-            </button>
-            {printMsg && (
-              <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>
-                {printMsg}
-              </span>
-            )}
-          </div>
+          {!isDeleted && (
+            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                className="btn"
+                style={{ fontSize: '13px', padding: '5px 12px' }}
+                onClick={handlePrint}
+                disabled={printing}
+              >
+                {printing ? 'Printing…' : 'Print receipt'}
+              </button>
+              <button
+                className="btn"
+                style={{ fontSize: '13px', padding: '5px 12px' }}
+                onClick={e => handlePrint(e, true)}
+                disabled={printing}
+              >
+                {printing ? 'Printing…' : 'Print + Bewirtung'}
+              </button>
+              {printMsg && (
+                <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>
+                  {printMsg}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
