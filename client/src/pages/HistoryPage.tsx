@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Tab, WSMessage } from '@downtown/shared';
+import type { Tab, TabEvent, WSMessage } from '@downtown/shared';
 import { tabsApi, printerApi } from '../api';
 import { subscribe } from '../lib/liveUpdates';
-import { formatDateTime } from '../utils/time';
+import { formatDateTime, formatTime } from '../utils/time';
 import { formatMoney } from '../utils/money';
 import { useSession } from '../context/SessionContext';
 
-const TERMINAL_TAB_EVENTS = new Set<WSMessage['type']>(['tab:closed', 'tab:voided', 'tab:deleted']);
+const TRACKED_TAB_EVENTS = new Set<WSMessage['type']>(['tab:opened', 'tab:updated', 'tab:closed', 'tab:voided', 'tab:deleted']);
 
 export default function HistoryPage() {
   const { session }               = useSession();
@@ -32,7 +32,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {
-      if (TERMINAL_TAB_EVENTS.has(msg.type)) {
+      if (TRACKED_TAB_EVENTS.has(msg.type)) {
         const incoming = msg.data as Tab;
         if (sessionId == null || incoming.session_id === sessionId) {
           setTabs(prev => {
@@ -94,10 +94,47 @@ export default function HistoryPage() {
   );
 }
 
+function describeEvent(e: TabEvent): string {
+  const p = e.payload;
+  switch (e.event_type) {
+    case 'tab_opened':  return `Tab geöffnet`;
+    case 'item_added':  return `+${(p.qty as number) ?? 1}× ${p.name as string}  ·  ${formatMoney((p.price_cents as number) * ((p.qty as number) ?? 1))}`;
+    case 'item_removed': return `−${(p.quantity_removed as number) ?? 1}× ${p.name as string}`;
+    case 'tab_updated': return `Notiz geändert`;
+    case 'tab_closed':  return `Bezahlt · ${p.payment_method as string} · ${formatMoney(p.total as number)}`;
+    case 'tab_deleted': return `Gelöscht`;
+    case 'split_paid':  return `Split bezahlt`;
+    default:            return e.event_type;
+  }
+}
+
+function ActivityDot({ type }: { type: string }) {
+  const color = type === 'item_added' ? 'var(--primary)' : type === 'item_removed' ? 'var(--danger, #e53e3e)' : 'var(--text-muted)';
+  return <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0, marginTop: 4 }} />;
+}
+
 function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean; onToggle: () => void }) {
   const closedAt = tab.closed_at ?? tab.voided_at ?? tab.deleted_at;
+  const displayTime = closedAt ?? tab.opened_at;
+  const runningTotal = tab.total_cents ?? (tab.items?.reduce((s, i) => s + i.price_snapshot_cents * i.quantity, 0) ?? 0);
   const [printing, setPrinting] = useState(false);
   const [printMsg, setPrintMsg] = useState('');
+  const [showActivity, setShowActivity] = useState(false);
+  const [events, setEvents] = useState<TabEvent[] | null>(null);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  async function toggleActivity(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (showActivity) { setShowActivity(false); return; }
+    setShowActivity(true);
+    if (events !== null) return;
+    setEventsLoading(true);
+    try {
+      setEvents(await tabsApi.events(tab.id));
+    } finally {
+      setEventsLoading(false);
+    }
+  }
 
   async function handlePrint(e: React.MouseEvent, bewirtung = false) {
     e.stopPropagation();
@@ -143,15 +180,15 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             {tab.customer_name}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-            {closedAt ? formatDateTime(closedAt) : '—'}
+            {formatDateTime(displayTime)}
           </div>
         </div>
-        <span className={`badge ${tab.status === 'closed' ? 'badge--green' : 'badge--gray'}`}>
+        <span className={`badge ${tab.status === 'closed' ? 'badge--green' : tab.status === 'open' ? 'badge--blue' : 'badge--gray'}`}>
           {tab.status}
         </span>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontWeight: 600, fontSize: '14px' }}>
-            {tab.total_cents != null ? formatMoney(tab.total_cents) : '—'}
+            {formatMoney(runningTotal)}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
             {tab.payment_method ?? ''}
@@ -191,9 +228,10 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             {tab.tip_cents > 0 && (
               <Row label="Tip" value={formatMoney(tab.tip_cents)} />
             )}
-            {tab.total_cents != null && (
-              <Row label="Total" value={formatMoney(tab.total_cents)} bold />
-            )}
+            {tab.status === 'open'
+              ? <Row label="Laufend" value={formatMoney(runningTotal)} bold />
+              : tab.total_cents != null && <Row label="Total" value={formatMoney(tab.total_cents)} bold />
+            }
             {(tab.tax_standard_cents != null && tab.tax_standard_cents > 0) && (
               <Row label="MwSt. 19 %" value={formatMoney(tab.tax_standard_cents)} muted />
             )}
@@ -224,28 +262,45 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             </p>
           )}
 
-          {tab.status !== 'deleted' && (
-            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                className="btn"
-                style={{ fontSize: '13px', padding: '5px 12px' }}
-                onClick={handlePrint}
-                disabled={printing}
-              >
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {tab.status === 'closed' && (<>
+              <button className="btn" style={{ fontSize: '13px', padding: '5px 12px' }} onClick={handlePrint} disabled={printing}>
                 {printing ? 'Printing…' : 'Print receipt'}
               </button>
-              <button
-                className="btn"
-                style={{ fontSize: '13px', padding: '5px 12px' }}
-                onClick={e => handlePrint(e, true)}
-                disabled={printing}
-              >
+              <button className="btn" style={{ fontSize: '13px', padding: '5px 12px' }} onClick={e => handlePrint(e, true)} disabled={printing}>
                 {printing ? 'Printing…' : 'Print + Bewirtung'}
               </button>
               {printMsg && (
-                <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>
-                  {printMsg}
-                </span>
+                <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>{printMsg}</span>
+              )}
+            </>)}
+            <button
+              className="btn btn--ghost"
+              style={{ fontSize: '13px', padding: '5px 12px', marginLeft: 'auto' }}
+              onClick={toggleActivity}
+            >
+              {showActivity ? 'Bestellung' : 'Verlauf'}
+            </button>
+          </div>
+
+          {showActivity && (
+            <div style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>
+              {eventsLoading && <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Laden…</p>}
+              {events && events.length === 0 && (
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Keine Ereignisse.</p>
+              )}
+              {events && events.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {events.map(e => (
+                    <div key={e.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px' }}>
+                      <ActivityDot type={e.event_type} />
+                      <span style={{ color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatTime(e.created_at)}
+                      </span>
+                      <span style={{ color: 'var(--text)' }}>{describeEvent(e)}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

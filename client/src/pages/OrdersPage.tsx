@@ -229,6 +229,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       } else if (msg.type === 'menu:product_updated') {
         const product = msg.data as Product;
         setProducts(prev => prev.map(p => p.id === product.id ? product : p));
+      } else if (msg.type === 'menu:product_deleted') {
+        const { id } = msg.data as { id: number };
+        setProducts(prev => prev.filter(p => p.id !== id));
       } else if (msg.type === 'pool:tick') {
         const d = msg.data as { session_id: number; elapsed_seconds: number; running_cost_cents: number };
         setSessionTicks(prev => ({ ...prev, [d.session_id]: { elapsed_seconds: d.elapsed_seconds, running_cost_cents: d.running_cost_cents } }));

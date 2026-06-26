@@ -1,4 +1,4 @@
-import type { Product, ProductVariant, Tab, DailySummary, PoolTable, WaitlistEntry, BilliardHistoryItem, Settings, Session, ShiftSummary, Category } from '@downtown/shared';
+import type { Product, ProductVariant, Tab, TabEvent, DailySummary, PoolTable, WaitlistEntry, BilliardHistoryItem, Settings, Session, ShiftSummary, Category } from '@downtown/shared';
 
 const BASE = '/api';
 
@@ -62,6 +62,8 @@ export const productsApi = {
     req<Product>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   toggleAvailability: (id: number) =>
     req<Product>(`/products/${id}/availability`, { method: 'PATCH' }),
+  delete: (id: number) =>
+    req<void>(`/products/${id}`, { method: 'DELETE' }),
   reorder: (items: ProductReorderItem[]) =>
     req<void>('/products/reorder', { method: 'PATCH', body: JSON.stringify(items) }),
 };
@@ -106,6 +108,7 @@ export const tabsApi = {
       body: JSON.stringify({ items, payment_method, tip_cents }),
     }),
   history: (sessionId?: number) => req<Tab[]>('/tabs/history' + (sessionId != null ? `?session_id=${sessionId}` : '')),
+  events: (tabId: number) => req<TabEvent[]>(`/tabs/${tabId}/events`),
 };
 
 export const poolApi = {

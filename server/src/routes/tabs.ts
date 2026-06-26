@@ -164,21 +164,18 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/tabs/history — all closed + voided tabs, newest first
+// GET /api/tabs/history — all tabs (open + closed), newest first
 router.get('/history', (req: Request, res: Response) => {
   const { session_id } = req.query;
 
   let rows: any[];
   if (session_id) {
     rows = db.prepare(
-      `SELECT * FROM tabs
-       WHERE status != 'open' AND session_id = ?
-       ORDER BY COALESCE(closed_at, voided_at, deleted_at) DESC`
+      `SELECT * FROM tabs WHERE session_id = ? ORDER BY opened_at DESC`
     ).all(session_id) as any[];
   } else {
     rows = db.prepare(
-      `SELECT * FROM tabs WHERE status != 'open'
-       ORDER BY COALESCE(closed_at, voided_at, deleted_at) DESC LIMIT 500`
+      `SELECT * FROM tabs ORDER BY opened_at DESC LIMIT 500`
     ).all() as any[];
   }
 
@@ -202,6 +199,15 @@ router.get('/:id', (req: Request, res: Response) => {
   const tab = buildTab(Number(req.params.id));
   if (!tab) return void res.status(404).json({ error: 'not found' });
   res.json(tab);
+});
+
+// GET /api/tabs/:id/events
+router.get('/:id/events', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const rows = db.prepare(
+    'SELECT * FROM events WHERE tab_id = ? ORDER BY created_at ASC'
+  ).all(id) as Array<{ id: number; event_type: string; tab_id: number; payload: string; created_at: string }>;
+  res.json(rows.map(r => ({ ...r, payload: JSON.parse(r.payload) })));
 });
 
 // POST /api/tabs — open new tab

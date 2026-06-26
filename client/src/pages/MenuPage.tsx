@@ -270,6 +270,18 @@ export default function MenuPage() {
     }
   }
 
+  async function handleDeleteProduct() {
+    if (!editingProduct) return;
+    if (!window.confirm(`Produkt "${editingProduct.name}" wirklich löschen?`)) return;
+    try {
+      await productsApi.delete(editingProduct.id);
+      setProducts(prev => prev.filter(p => p.id !== editingProduct.id));
+      setShowProductModal(false);
+    } catch (e) {
+      setProductFormError((e as Error).message);
+    }
+  }
+
   async function handleSaveProduct() {
     const price_cents = parseMoney(productForm.price);
     if (!productForm.name.trim())   { setProductFormError('Name is required'); return; }
@@ -735,6 +747,11 @@ export default function MenuPage() {
               )}
             </div>
             <div className="modal__footer">
+              {editingProduct && (
+                <button className="btn btn--ghost btn--danger-text" onClick={handleDeleteProduct} style={{ marginRight: 'auto' }}>
+                  Löschen
+                </button>
+              )}
               <button className="btn btn--ghost" onClick={() => setShowProductModal(false)}>Abbrechen</button>
               <button className="btn btn--primary" onClick={handleSaveProduct} disabled={savingProduct}>
                 {savingProduct ? 'Speichern…' : 'Speichern'}

@@ -196,6 +196,14 @@ export interface ShiftSummary {
   by_category: Array<{ category: string; total_cents: number }>;
 }
 
+export interface TabEvent {
+  id: number;
+  event_type: string;
+  tab_id: number;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
 export type WSEventType =
   | 'tab:opened'
   | 'tab:updated'
@@ -207,6 +215,7 @@ export type WSEventType =
   | 'pool:session_stopped'
   | 'pool:tick'
   | 'menu:product_updated'
+  | 'menu:product_deleted'
   | 'waitlist:updated';
 
 export interface WSMessage {

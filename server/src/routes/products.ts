@@ -136,6 +136,30 @@ router.put('/:id', (req: Request, res: Response) => {
   res.json(product);
 });
 
+router.delete('/:id', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+
+  const exists = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
+  if (!exists) return void res.status(404).json({ error: 'not found' });
+
+  const inUse = db.prepare(
+    `SELECT 1 FROM line_items li
+     JOIN tabs t ON t.id = li.tab_id
+     WHERE li.product_id = ? AND t.status = 'open' LIMIT 1`
+  ).get(id);
+  if (inUse) return void res.status(409).json({ error: 'Produkt ist in einem offenen Tab — zuerst Tab schließen.' });
+
+  db.transaction(() => {
+    db.prepare('UPDATE line_items SET variant_id = NULL WHERE variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)').run(id);
+    db.prepare('UPDATE line_items SET product_id = NULL WHERE product_id = ?').run(id);
+    db.prepare('DELETE FROM product_variants WHERE product_id = ?').run(id);
+    db.prepare('DELETE FROM products WHERE id = ?').run(id);
+  })();
+
+  broadcast({ type: 'menu:product_deleted', data: { id } });
+  res.status(204).send();
+});
+
 router.patch('/:id/availability', (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const now = new Date().toISOString();
