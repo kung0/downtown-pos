@@ -211,7 +211,12 @@ export default function MenuPage() {
     const activeId = active.id as number;
     const overId = over.id as number;
 
-    setDraftCategories(prev => applyCategoryReorder(prev, activeId, overId, dragDepth));
+    // Recompute final depth from delta to avoid reading stale state
+    const flat = flattenTree(buildTree(draftCategories));
+    const baseDepth = flat.find(fc => fc.cat.id === activeId)?.depth ?? 0;
+    const finalDepth = Math.max(0, baseDepth + Math.round(event.delta.x / 30));
+
+    setDraftCategories(prev => applyCategoryReorder(prev, activeId, overId, finalDepth));
     setDragDepth(0);
   }
 
