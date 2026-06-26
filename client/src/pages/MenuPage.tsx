@@ -5,6 +5,8 @@ import type { CategoryInput } from '../api';
 import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../utils/money';
 import { buildTree, flattenTree, findNode, collectDescendantIds } from '../utils/categoryTree';
 import type { TreeNode } from '../utils/categoryTree';
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +58,13 @@ export default function MenuPage() {
   const [variantDraft,     setVariantDraft]     = useState<VariantDraft | null>(null);
   const [savingVariant,    setSavingVariant]    = useState(false);
 
+  // reorder mode
+  const [isReordering,     setIsReordering]     = useState(false);
+  const [draftProducts,    setDraftProducts]     = useState<Product[]>([]);
+  const [draftCategories,  setDraftCategories]   = useState<Category[]>([]);
+  const [savingOrder,      setSavingOrder]       = useState(false);
+  const [reorderError,     setReorderError]      = useState<string | null>(null);
+
   // category modal
   const [showCatModal, setShowCatModal] = useState(false);
   const [editingCat,   setEditingCat]   = useState<Category | null>(null);
@@ -83,6 +92,21 @@ export default function MenuPage() {
   const nonRootCats = categories.filter(c => c.parent_id !== null);
 
   // ── product actions ──────────────────────────────────────────────────────
+
+  function enterReorderMode() {
+    setDraftProducts([...products]);
+    setDraftCategories([...categories]);
+    setReorderError(null);
+    setIsReordering(true);
+  }
+
+  function cancelReorder() {
+    setIsReordering(false);
+    setReorderError(null);
+  }
+
+  async function handleSaveProductOrder() { /* Task 7 */ }
+  async function handleSaveCategoryOrder() { /* Task 8 */ }
 
   function openCreateProduct() {
     setEditingProduct(null);
@@ -274,15 +298,42 @@ export default function MenuPage() {
     <div className="page">
       <div className="page__header">
         <h1 className="page__title">Menu</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {view === 'products' && (
-            <button className="btn btn--primary" onClick={openCreateProduct}>+ Produkt</button>
-          )}
-          {view === 'categories' && (
-            <button className="btn btn--primary" onClick={() => openCreateCat()}>+ Kategorie</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {isReordering ? (
+            <>
+              {reorderError && (
+                <span style={{ fontSize: 13, color: 'var(--error, #e53e3e)' }}>{reorderError}</span>
+              )}
+              <button className="btn btn--ghost" onClick={cancelReorder} disabled={savingOrder}>
+                Abbrechen
+              </button>
+              <button
+                className="btn btn--primary"
+                onClick={view === 'products' ? handleSaveProductOrder : handleSaveCategoryOrder}
+                disabled={savingOrder}
+              >
+                {savingOrder ? 'Speichern…' : 'Speichern'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn--ghost btn--sm" onClick={enterReorderMode}>
+                Reihenfolge
+              </button>
+              {view === 'products' && (
+                <button className="btn btn--primary" onClick={openCreateProduct}>+ Produkt</button>
+              )}
+              {view === 'categories' && (
+                <button className="btn btn--primary" onClick={() => openCreateCat()}>+ Kategorie</button>
+              )}
+            </>
           )}
         </div>
       </div>
+
+      {isReordering && (
+        <div className="reorder-banner">Ziehen zum Sortieren — Änderungen werden erst beim Speichern übernommen</div>
+      )}
 
       {/* ── Tab switcher ── */}
       <div className="menu-tabs">
