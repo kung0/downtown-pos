@@ -3,6 +3,8 @@ import type { Product, ProductVariant, Category } from '@downtown/shared';
 import { productsApi, variantsApi, categoriesApi } from '../api';
 import type { CategoryInput } from '../api';
 import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../utils/money';
+import { buildTree, flattenTree, findNode, collectDescendantIds } from '../utils/categoryTree';
+import type { TreeNode } from '../utils/categoryTree';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -11,45 +13,9 @@ function formatDelta(cents: number): string {
   return (cents > 0 ? '+' : '') + formatMoney(cents);
 }
 
-interface TreeNode {
-  cat: Category;
-  children: TreeNode[];
-}
-
-function buildTree(cats: Category[]): TreeNode[] {
-  const byParent = new Map<number | null, Category[]>();
-  cats.forEach(c => {
-    const key = c.parent_id ?? null;
-    if (!byParent.has(key)) byParent.set(key, []);
-    byParent.get(key)!.push(c);
-  });
-  const sort = (list: Category[]) =>
-    [...list].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  function nodes(parentId: number | null): TreeNode[] {
-    return sort(byParent.get(parentId) ?? []).map(cat => ({ cat, children: nodes(cat.id) }));
-  }
-  return nodes(null);
-}
-
-function flattenTree(nodes: TreeNode[], depth = 0): Array<{ cat: Category; depth: number }> {
-  return nodes.flatMap(n => [{ cat: n.cat, depth }, ...flattenTree(n.children, depth + 1)]);
-}
-
 function hasProducts(node: TreeNode, products: Product[]): boolean {
   return products.some(p => p.category === node.cat.name) ||
     node.children.some(child => hasProducts(child, products));
-}
-
-function collectDescendantIds(node: TreeNode): number[] {
-  return [node.cat.id, ...node.children.flatMap(collectDescendantIds)];
-}
-
-function findNode(nodes: TreeNode[], id: number): TreeNode | undefined {
-  for (const n of nodes) {
-    if (n.cat.id === id) return n;
-    const found = findNode(n.children, id);
-    if (found) return found;
-  }
 }
 
 // ── product form ──────────────────────────────────────────────────────────────
