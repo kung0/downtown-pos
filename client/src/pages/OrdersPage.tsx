@@ -172,12 +172,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   function cartRemoveLastVariant(productId: number) {
     setCart(prev => {
-      const entries = prev.filter(c => c.product.id === productId && c.variantId !== undefined && !c.note);
+      const entries = prev.filter(c => c.product.id === productId);
       if (entries.length === 0) return prev;
       const e = entries.reduce((best, c) => c._key > best._key ? c : best);
       return e.quantity <= 1
-        ? prev.filter(c => c !== e)
-        : prev.map(c => c === e ? { ...c, quantity: c.quantity - 1 } : c);
+        ? prev.filter(c => c._key !== e._key)
+        : prev.map(c => c._key === e._key ? { ...c, quantity: c.quantity - 1 } : c);
     });
   }
 
