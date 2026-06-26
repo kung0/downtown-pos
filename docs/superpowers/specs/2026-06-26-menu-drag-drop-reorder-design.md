@@ -28,7 +28,7 @@ Both the "Produkte" and "Kategorien" tabs get a "Reihenfolge" button in the head
 - Drag within the same level → reorders siblings
 - Reparenting via horizontal offset: dragging right makes the item a child of the row above; dragging left decreases depth (becomes sibling or root)
 - A projected drop line + depth indicator shows where the item will land while dragging
-- Max depth is limited to 2 levels (root → subcategory), matching the existing tree structure
+- Depth is not artificially capped — the tree already supports arbitrary nesting and this feature does not change that
 
 **Saving / cancelling:**
 - "Abbrechen" discards all local draft changes and exits the mode immediately
