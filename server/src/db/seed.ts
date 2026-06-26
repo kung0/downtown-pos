@@ -14,6 +14,7 @@ interface SeedProduct {
   sort_order: number;
   tax_category?: Tax;
   variants?: SeedVariant[];
+  is_misc?: boolean;
 }
 
 // ── Category tree ────────────────────────────────────────────────────────────
@@ -39,6 +40,10 @@ const CATEGORY_TREE = [
     { name: 'Cocktails',   tax: 'standard', sort: 30 },
     { name: 'Shots',       tax: 'standard', sort: 40 },
     { name: 'Softdrinks',  tax: 'standard', sort: 50 },
+  ]},
+  { parent: 'Sonstiges', tax: 'standard', children: [
+    { name: 'Sonstiges Essen',    tax: 'reduced',  sort: 10 },
+    { name: 'Sonstiges Getränk',  tax: 'standard', sort: 20 },
   ]},
 ] as const;
 
@@ -210,6 +215,10 @@ const PRODUCTS: SeedProduct[] = [
   { name: 'Wasser 0,33l', category: 'Softdrinks', price_cents: 250, sort_order: 70 },
   { name: 'Wasser 1l',    category: 'Softdrinks', price_cents: 500, sort_order: 80 },
   { name: 'Tee',          category: 'Softdrinks', price_cents: 300, sort_order: 90 },
+
+  // ── SONSTIGES (misc catch-all) ────────────────────────────────────────────
+  { name: 'Sonstiges Essen',    category: 'Sonstiges Essen',    price_cents: 0, sort_order: 10, is_misc: true, tax_category: 'reduced' },
+  { name: 'Sonstiges Getränk',  category: 'Sonstiges Getränk',  price_cents: 0, sort_order: 10, is_misc: true, tax_category: 'standard' },
 ];
 
 // Maps a category name to its tax rate from the tree above.
@@ -229,8 +238,8 @@ function insertMenu(now: string): void {
     'INSERT INTO categories (name, parent_id, tax_category, sort_order, created_at) VALUES (?, ?, ?, ?, ?)'
   );
   const insertProduct = db.prepare(`
-    INSERT INTO products (name, category, price_cents, tax_category, available, has_variants, sort_order, created_at, updated_at)
-    VALUES (@name, @category, @price_cents, @tax_category, 1, @has_variants, @sort_order, @now, @now)
+    INSERT INTO products (name, category, price_cents, tax_category, available, has_variants, is_misc, sort_order, created_at, updated_at)
+    VALUES (@name, @category, @price_cents, @tax_category, 1, @has_variants, @is_misc, @sort_order, @now, @now)
   `);
   const insertVariant = db.prepare(`
     INSERT INTO product_variants (product_id, name, price_cents, available, sort_order, created_at)
@@ -251,7 +260,7 @@ function insertMenu(now: string): void {
     const has_variants = p.variants && p.variants.length > 0 ? 1 : 0;
     const { lastInsertRowid } = insertProduct.run({
       name: p.name, category: p.category, price_cents: p.price_cents,
-      tax_category, has_variants, sort_order: p.sort_order, now,
+      tax_category, has_variants, is_misc: p.is_misc ? 1 : 0, sort_order: p.sort_order, now,
     });
     if (p.variants) {
       p.variants.forEach((v, i) =>
@@ -289,6 +298,24 @@ export function seedIfEmpty(): void {
   if (categoryCount === 0 && productCount === 0) {
     db.transaction(() => insertMenu(now))();
     console.log(`  seeded ${CATEGORY_TREE.length} category groups + ${PRODUCTS.length} products`);
+  }
+
+  // Ensure misc catch-all products exist (migration for DBs seeded before this feature).
+  const miscEssen = db.prepare("SELECT id FROM products WHERE is_misc = 1 AND name = 'Sonstiges Essen'").get();
+  if (!miscEssen) {
+    let parentId = (db.prepare("SELECT id FROM categories WHERE name = 'Sonstiges' AND parent_id IS NULL").get() as { id: number } | undefined)?.id;
+    if (!parentId) {
+      parentId = Number((db.prepare("INSERT INTO categories (name, parent_id, tax_category, sort_order, created_at) VALUES ('Sonstiges', NULL, 'standard', 999, ?)").run(now)).lastInsertRowid);
+    }
+    const getOrInsertChild = (name: string, tax: string, sort: number): void => {
+      const exists = db.prepare('SELECT id FROM categories WHERE name = ? AND parent_id = ?').get(name, parentId);
+      if (!exists) db.prepare('INSERT INTO categories (name, parent_id, tax_category, sort_order, created_at) VALUES (?, ?, ?, ?, ?)').run(name, parentId, tax, sort, now);
+    };
+    getOrInsertChild('Sonstiges Essen',   'reduced',  10);
+    getOrInsertChild('Sonstiges Getränk', 'standard', 20);
+    db.prepare(`INSERT INTO products (name, category, price_cents, tax_category, available, has_variants, is_misc, sort_order, created_at, updated_at) VALUES (?, ?, 0, ?, 1, 0, 1, 10, ?, ?)`).run('Sonstiges Essen',   'Sonstiges Essen',   'reduced',  now, now);
+    db.prepare(`INSERT INTO products (name, category, price_cents, tax_category, available, has_variants, is_misc, sort_order, created_at, updated_at) VALUES (?, ?, 0, ?, 1, 0, 1, 10, ?, ?)`).run('Sonstiges Getränk', 'Sonstiges Getränk', 'standard', now, now);
+    console.log('  seeded misc catch-all products');
   }
 
   const insertTable = db.prepare(

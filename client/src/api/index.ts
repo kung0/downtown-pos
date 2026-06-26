@@ -92,15 +92,15 @@ export const tabsApi = {
     req<Tab>('/tabs', { method: 'POST', body: JSON.stringify({ customer_name, notes }) }),
   updateNotes: (tabId: number, notes: string) =>
     req<Tab>(`/tabs/${tabId}/notes`, { method: 'PATCH', body: JSON.stringify({ notes }) }),
-  addItem: (tabId: number, product_id: number, quantity = 1, note?: string, variant_id?: number) =>
-    req<Tab>(`/tabs/${tabId}/items`, { method: 'POST', body: JSON.stringify({ product_id, quantity, note, variant_id }) }),
+  addItem: (tabId: number, product_id: number, quantity = 1, note?: string, variant_id?: number, custom_price_cents?: number) =>
+    req<Tab>(`/tabs/${tabId}/items`, { method: 'POST', body: JSON.stringify({ product_id, quantity, note, variant_id, custom_price_cents }) }),
   removeItem: (tabId: number, itemId: number) =>
     req<Tab>(`/tabs/${tabId}/items/${itemId}`, { method: 'DELETE' }),
   close: (tabId: number, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
     req<Tab>(`/tabs/${tabId}/close`, { method: 'POST', body: JSON.stringify({ payment_method, tip_cents, discount_cents }) }),
   delete: (tabId: number) =>
     req<{ id: number }>(`/tabs/${tabId}`, { method: 'DELETE' }),
-  quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
+  quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number; custom_price_cents?: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
     req<Tab>('/tabs/quick-pay', { method: 'POST', body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }) }),
   splitPay: (tabId: number, items: Array<{ id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
     req<{ paid_tab: Tab; remaining_tab: Tab }>(`/tabs/${tabId}/split-pay`, {
@@ -161,7 +161,7 @@ export const printerApi = {
   test: () => req<{ ok: boolean }>('/printer/test', { method: 'POST' }),
   printReceipt: (tabId: number, opts?: { bewirtung?: boolean }) =>
     req<{ ok: boolean }>(`/printer/receipt/${tabId}`, { method: 'POST', body: JSON.stringify(opts ?? {}) }),
-  printOrder: (customer_name: string, items: Array<{ name: string; quantity: number; note?: string | null }>) =>
+  printOrder: (customer_name: string, items: Array<{ name: string; quantity: number; note?: string | null; category_name?: string }>) =>
     req<{ ok: boolean }>('/printer/order', { method: 'POST', body: JSON.stringify({ customer_name, items }) }),
 };
 

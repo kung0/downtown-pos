@@ -283,10 +283,10 @@ export default function MenuPage() {
   }
 
   async function handleSaveProduct() {
-    const price_cents = parseMoney(productForm.price);
+    const price_cents = editingProduct?.is_misc ? 0 : parseMoney(productForm.price);
     if (!productForm.name.trim())   { setProductFormError('Name is required'); return; }
     if (!productForm.category)       { setProductFormError('Category is required'); return; }
-    if (price_cents <= 0)            { setProductFormError('Enter a valid price'); return; }
+    if (!editingProduct?.is_misc && price_cents <= 0) { setProductFormError('Enter a valid price'); return; }
 
     setSavingProduct(true);
     setProductFormError(null);
@@ -651,18 +651,23 @@ export default function MenuPage() {
                   ))}
                 </select>
               </div>
-              <div className="field">
-                <label className="field__label">Preis</label>
-                <div className="price-input">
-                  <span className="price-input__prefix">€</span>
-                  <input
-                    className="price-input__field" type="text" inputMode="decimal" placeholder="0.00"
-                    value={productForm.price}
-                    onChange={e => setProductForm(f => ({ ...f, price: e.target.value }))}
-                    onKeyDown={e => e.key === 'Enter' && handleSaveProduct()}
-                  />
-                </div>
-              </div>
+              {editingProduct?.is_misc
+                ? <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0' }}>Preis wird beim Bestellen gesetzt.</p>
+                : (
+                  <div className="field">
+                    <label className="field__label">Preis</label>
+                    <div className="price-input">
+                      <span className="price-input__prefix">€</span>
+                      <input
+                        className="price-input__field" type="text" inputMode="decimal" placeholder="0.00"
+                        value={productForm.price}
+                        onChange={e => setProductForm(f => ({ ...f, price: e.target.value }))}
+                        onKeyDown={e => e.key === 'Enter' && handleSaveProduct()}
+                      />
+                    </div>
+                  </div>
+                )
+              }
               <div className="field">
                 <label className="field__label">Sortierung</label>
                 <input

@@ -86,13 +86,17 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
   const resolvedItems: ResolvedItem[] = [];
   const disc = Math.max(0, Math.floor(Number(discount_cents)));
 
-  for (const { product_id, quantity = 1, variant_id } of items as Array<{ product_id: number; quantity?: number; variant_id?: number }>) {
+  for (const { product_id, quantity = 1, variant_id, custom_price_cents } of items as Array<{ product_id: number; quantity?: number; variant_id?: number; custom_price_cents?: number }>) {
     const qty = Math.max(1, Math.floor(Number(quantity)));
     const product = db.prepare('SELECT * FROM products WHERE id = ?').get(product_id) as any;
     if (!product) return void res.status(404).json({ error: `product ${product_id} not found` });
 
+    if (product.is_misc && (!Number.isInteger(custom_price_cents) || (custom_price_cents as number) <= 0)) {
+      return void res.status(400).json({ error: `custom_price_cents required for misc product ${product_id}` });
+    }
+
     let itemName: string = product.name;
-    let itemPrice: number = product.price_cents;
+    let itemPrice: number = product.is_misc ? (custom_price_cents as number) : product.price_cents;
     let variantId: number | null = null;
 
     if (variant_id) {
@@ -260,7 +264,7 @@ router.patch('/:id/notes', (req: Request, res: Response) => {
 // POST /api/tabs/:id/items — add or increment item
 router.post('/:id/items', (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
-  const { product_id, note, quantity = 1, variant_id } = req.body;
+  const { product_id, note, quantity = 1, variant_id, custom_price_cents } = req.body;
   const qty = Math.max(1, Math.floor(Number(quantity)));
 
   const tabRow = db.prepare("SELECT id FROM tabs WHERE id = ? AND status = 'open'").get(tabId);
@@ -269,11 +273,15 @@ router.post('/:id/items', (req: Request, res: Response) => {
   const product = db.prepare('SELECT * FROM products WHERE id = ?').get(product_id) as any;
   if (!product) return void res.status(404).json({ error: 'product not found' });
 
+  if (product.is_misc && (!Number.isInteger(custom_price_cents) || custom_price_cents <= 0)) {
+    return void res.status(400).json({ error: 'custom_price_cents required for misc products' });
+  }
+
   const now = new Date().toISOString();
   const noteVal = note ?? null;
 
   let itemName: string = product.name;
-  let itemPrice: number = product.price_cents;
+  let itemPrice: number = product.is_misc ? custom_price_cents : product.price_cents;
   let variantIdVal: number | null = null;
 
   if (variant_id) {
@@ -284,18 +292,25 @@ router.post('/:id/items', (req: Request, res: Response) => {
     variantIdVal = variant.id;
   }
 
-  const existing = db.prepare(
-    "SELECT * FROM line_items WHERE tab_id = ? AND product_id = ? AND (variant_id IS ?) AND (note IS ?) AND kind = 'product'"
-  ).get(tabId, product_id, variantIdVal, noteVal) as any;
+  // Misc items always get their own line (each has a custom price, never dedup).
+  if (!product.is_misc) {
+    const existing = db.prepare(
+      "SELECT * FROM line_items WHERE tab_id = ? AND product_id = ? AND (variant_id IS ?) AND (note IS ?) AND kind = 'product'"
+    ).get(tabId, product_id, variantIdVal, noteVal) as any;
 
-  if (existing) {
-    db.prepare('UPDATE line_items SET quantity = quantity + ? WHERE id = ?').run(qty, existing.id);
-  } else {
-    db.prepare(`
-      INSERT INTO line_items (tab_id, product_id, variant_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'product', ?)
-    `).run(tabId, product_id, variantIdVal, itemName, itemPrice, product.tax_category, qty, noteVal, now);
+    if (existing) {
+      db.prepare('UPDATE line_items SET quantity = quantity + ? WHERE id = ?').run(qty, existing.id);
+      logEvent('item_added', tabId, { product_id, variant_id: variantIdVal, name: itemName, price_cents: itemPrice, qty });
+      const tab = buildTab(tabId)!;
+      broadcast({ type: 'tab:updated', data: tab });
+      return void res.json(tab);
+    }
   }
+
+  db.prepare(`
+    INSERT INTO line_items (tab_id, product_id, variant_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'product', ?)
+  `).run(tabId, product_id, variantIdVal, itemName, itemPrice, product.tax_category, qty, noteVal, now);
 
   logEvent('item_added', tabId, { product_id, variant_id: variantIdVal, name: itemName, price_cents: itemPrice, qty });
 

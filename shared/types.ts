@@ -32,6 +32,7 @@ export interface Product {
   tax_category: TaxCategory;
   available: boolean;
   has_variants: boolean;
+  is_misc: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -125,6 +126,13 @@ export interface BilliardHistoryItem {
   computed_cost_cents: number;
 }
 
+export interface OrderPrinter {
+  id: string;
+  name: string;
+  ip: string;
+  category_ids: number[];
+}
+
 export interface Settings {
   pool_rate_standard_cents: number;
   pool_rate_peak_cents: number;
@@ -132,6 +140,7 @@ export interface Settings {
   dart_hourly_rate_cents: number;
   printer_ip: string;
   printer_auto_print: boolean;
+  printer_order_printers: OrderPrinter[];
   dsfinvk_kassen_id: string;
   dsfinvk_betreiber_name: string;
   dsfinvk_strasse: string;

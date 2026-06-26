@@ -36,6 +36,7 @@ interface CartItem {
   variantId?: number;
   variantName?: string;
   variantPrice?: number;
+  customPrice?: number;
 }
 
 interface Props { jumpTabId?: number | null; onJumpConsumed?: () => void; }
@@ -91,6 +92,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [printOrders, setPrintOrders] = useState(true);
   const [printError, setPrintError] = useState<{ customerName: string; message: string } | null>(null);
   const [variantPicker, setVariantPicker] = useState<Product | null>(null);
+  const [miscModal, setMiscModal] = useState<{ product: Product; priceInput: string; noteInput: string } | null>(null);
 
   const newTabInputRef = useRef<HTMLInputElement>(null);
   const productSearchRef = useRef<HTMLInputElement>(null);
@@ -99,7 +101,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   // ── cart helpers ──────────────────────────────────────────────
   const cartQty   = (id: number) => cart.filter(c => c.product.id === id).reduce((s, c) => s + c.quantity, 0);
-  const cartTotal = cart.reduce((s, c) => s + (c.variantPrice ?? c.product.price_cents) * c.quantity, 0);
+  const cartTotal = cart.reduce((s, c) => s + (c.customPrice ?? c.variantPrice ?? c.product.price_cents) * c.quantity, 0);
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
   function computeDiscount(input: string, type: 'flat' | 'pct', subtotalCents: number): number {
@@ -110,6 +112,10 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   function cartAdd(product: Product) {
+    if (product.is_misc) {
+      setMiscModal({ product, priceInput: '', noteInput: '' });
+      return;
+    }
     if (product.has_variants) {
       setVariantPicker(product);
       return;
@@ -148,6 +154,33 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     });
   }
 
+  function cartAddMisc(product: Product, priceCents: number, note?: string) {
+    const k = cartKeyRef.current++;
+    setHighlightedKey(k);
+    setCart(prev => [...prev, { product, quantity: 1, customPrice: priceCents, note: note || undefined, _key: k }]);
+    setMiscModal(null);
+  }
+
+  function cartRemoveMisc(productId: number) {
+    setCart(prev => {
+      const entries = prev.filter(c => c.product.id === productId);
+      if (entries.length === 0) return prev;
+      const e = entries.reduce((best, c) => c._key > best._key ? c : best);
+      return prev.filter(c => c !== e);
+    });
+  }
+
+  function cartRemoveLastVariant(productId: number) {
+    setCart(prev => {
+      const entries = prev.filter(c => c.product.id === productId && c.variantId !== undefined && !c.note);
+      if (entries.length === 0) return prev;
+      const e = entries.reduce((best, c) => c._key > best._key ? c : best);
+      return e.quantity <= 1
+        ? prev.filter(c => c !== e)
+        : prev.map(c => c === e ? { ...c, quantity: c.quantity - 1 } : c);
+    });
+  }
+
   function handleAddNote(note: string) {
     if (highlightedKey === null) return;
     const entry = cart.find(c => c._key === highlightedKey);
@@ -168,12 +201,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   // ── order ticket printing ─────────────────────────────────────
-  type OrderLine = { name: string; quantity: number; note?: string | null };
+  type OrderLine = { name: string; quantity: number; note?: string | null; category_name?: string };
   const cartOrderLines = (): OrderLine[] =>
     cart.map(c => ({
       name: c.variantName ? `${c.product.name} (${c.variantName})` : c.product.name,
       quantity: c.quantity,
       note: c.note ?? null,
+      category_name: c.product.category,
     }));
 
   function togglePrintOrders(v: boolean) {
@@ -297,8 +331,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
     try {
       let updated: Tab | undefined;
-      for (const { product, quantity, note, variantId } of cart) {
-        updated = await tabsApi.addItem(selectedId, product.id, quantity, note, variantId);
+      for (const { product, quantity, note, variantId, customPrice } of cart) {
+        updated = await tabsApi.addItem(selectedId, product.id, quantity, note, variantId, customPrice);
       }
       for (const item of (selectedTab?.items ?? [])) {
         const staged = itemQtyOverrides[item.id];
@@ -337,7 +371,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     if (directPaying || cartCount === 0) return;
     const tipCents      = parseMoney(directPayTip);
     const discountCents = computeDiscount(directPayDiscount, directPayDiscountType, cartTotal);
-    const items    = cart.map(c => ({ product_id: c.product.id, quantity: c.quantity, variant_id: c.variantId }));
+    const items    = cart.map(c => ({ product_id: c.product.id, quantity: c.quantity, variant_id: c.variantId, custom_price_cents: c.customPrice }));
     const orderLines = cartOrderLines();
 
     setDirectPaying(true);
@@ -366,8 +400,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setCreating(true);
     try {
       let currentTab = await tabsApi.create(newTabName.trim(), newTabNotes.trim() || undefined);
-      for (const { product, quantity, note, variantId } of cart) {
-        currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity, note, variantId);
+      for (const { product, quantity, note, variantId, customPrice } of cart) {
+        currentTab = await tabsApi.addItem(currentTab.id, product.id, quantity, note, variantId, customPrice);
       }
       firePrintOrder(currentTab.customer_name, orderLines);
       setTabs(prev => {
@@ -394,8 +428,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     const orderLines = cartOrderLines();
     try {
       let currentTab: Tab | undefined;
-      for (const { product, quantity, note, variantId } of cart) {
-        currentTab = await tabsApi.addItem(tabId, product.id, quantity, note, variantId);
+      for (const { product, quantity, note, variantId, customPrice } of cart) {
+        currentTab = await tabsApi.addItem(tabId, product.id, quantity, note, variantId, customPrice);
       }
       if (currentTab) {
         updateTab(currentTab);
@@ -538,7 +572,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 </div>
                 {item.note && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{item.note}</div>}
               </div>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{formatMoney((item.variantPrice ?? item.product.price_cents) * item.quantity)}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{formatMoney((item.customPrice ?? item.variantPrice ?? item.product.price_cents) * item.quantity)}</span>
               <button
                 className="btn btn--ghost btn--icon"
                 style={{ minWidth: 28, minHeight: 28, fontSize: 15, flexShrink: 0 }}
@@ -606,15 +640,22 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           )}
           <div className="product-card__name">{p.name}</div>
           <div className="product-card__price">
-            {p.has_variants && minVariantPrice !== null
-              ? `ab ${formatMoney(minVariantPrice)}`
-              : formatMoney(p.price_cents)}
+            {p.is_misc
+              ? 'Preis wählbar'
+              : p.has_variants && minVariantPrice !== null
+                ? `ab ${formatMoney(minVariantPrice)}`
+                : formatMoney(p.price_cents)}
           </div>
-          {!p.has_variants && stagedQty > 0 && (
+          {stagedQty > 0 && (
             <button
               className="product-card__remove"
               onMouseDown={e => e.preventDefault()}
-              onClick={e => { e.stopPropagation(); cartRemove(p.id); }}
+              onClick={e => {
+                e.stopPropagation();
+                if (p.is_misc) cartRemoveMisc(p.id);
+                else if (p.has_variants) cartRemoveLastVariant(p.id);
+                else cartRemove(p.id);
+              }}
             >
               −
             </button>
@@ -1010,7 +1051,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         const discount = computeDiscount(directPayDiscount, directPayDiscountType, cartTotal);
         const { standard: taxStd, reduced: taxRed } = computeTax(
           cart.map(c => ({
-            price_snapshot_cents: c.variantPrice ?? c.product.price_cents,
+            price_snapshot_cents: c.customPrice ?? c.variantPrice ?? c.product.price_cents,
             tax_category_snapshot: c.product.tax_category,
             quantity: c.quantity,
           }) as any),
@@ -1729,6 +1770,62 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           </div>
         </div>
       )}
+
+      {miscModal && (() => {
+        const confirmMisc = () => {
+          const cents = parseMoney(miscModal.priceInput);
+          if (cents > 0) cartAddMisc(miscModal.product, cents, miscModal.noteInput.trim() || undefined);
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setMiscModal(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 360 }}>
+              <div className="modal__header">
+                <h2 className="modal__title">{miscModal.product.name}</h2>
+                <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setMiscModal(null)}>✕</button>
+              </div>
+              <div className="modal__body">
+                <div className="field">
+                  <label className="field__label">Preis</label>
+                  <div className="price-input">
+                    <span className="price-input__prefix">€</span>
+                    <input
+                      className="price-input__field"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={miscModal.priceInput}
+                      onChange={e => setMiscModal(prev => prev ? { ...prev, priceInput: e.target.value } : null)}
+                      onKeyDown={e => e.key === 'Enter' && confirmMisc()}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="field">
+                  <label className="field__label">Notiz <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
+                  <input
+                    className="field__input"
+                    type="text"
+                    placeholder="z.B. Whiskey"
+                    value={miscModal.noteInput}
+                    onChange={e => setMiscModal(prev => prev ? { ...prev, noteInput: e.target.value } : null)}
+                    onKeyDown={e => e.key === 'Enter' && confirmMisc()}
+                  />
+                </div>
+              </div>
+              <div className="modal__footer">
+                <button className="btn btn--ghost" onClick={() => setMiscModal(null)}>Abbrechen</button>
+                <button
+                  className="btn btn--primary"
+                  disabled={parseMoney(miscModal.priceInput) <= 0}
+                  onClick={confirmMisc}
+                >
+                  Hinzufügen
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {noteModal && (
         <div className="modal-overlay" onClick={() => setNoteModal(null)}>

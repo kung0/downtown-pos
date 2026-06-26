@@ -8,7 +8,7 @@ const router = Router();
 
 interface ProductRow {
   id: number; name: string; category: string; price_cents: number;
-  tax_category: string; available: number; has_variants: number; sort_order: number;
+  tax_category: string; available: number; has_variants: number; is_misc: number; sort_order: number;
   created_at: string; updated_at: string;
 }
 
@@ -25,7 +25,7 @@ function resolveCategory(category: string): CatRow | undefined {
 
 function normalize(row: unknown): Product {
   const r = row as ProductRow;
-  return { ...r, available: Boolean(r.available), has_variants: Boolean(r.has_variants) } as Product;
+  return { ...r, available: Boolean(r.available), has_variants: Boolean(r.has_variants), is_misc: Boolean(r.is_misc) } as Product;
 }
 
 function normalizeVariant(row: unknown): ProductVariant {
@@ -111,23 +111,27 @@ router.put('/:id', (req: Request, res: Response) => {
   const { name, category, price_cents, has_variants, sort_order = 0 } = req.body;
 
   if (!name?.trim()) return void res.status(400).json({ error: 'name is required' });
-  if (!Number.isInteger(price_cents) || price_cents <= 0) return void res.status(400).json({ error: 'price_cents must be a positive integer' });
+
+  const existingProduct = db.prepare('SELECT is_misc FROM products WHERE id = ?').get(id) as { is_misc: number } | undefined;
+  const isMisc = existingProduct?.is_misc === 1;
+  if (!isMisc && (!Number.isInteger(price_cents) || price_cents <= 0)) return void res.status(400).json({ error: 'price_cents must be a positive integer' });
 
   const cat = resolveCategory(category);
   if (!cat) return void res.status(400).json({ error: 'invalid category' });
 
   const now = new Date().toISOString();
   const hasVariantsVal = has_variants != null ? (has_variants ? 1 : 0) : undefined;
+  const effectivePrice = isMisc ? 0 : price_cents;
 
   const { changes } = hasVariantsVal !== undefined
     ? db.prepare(`
         UPDATE products SET name = ?, category = ?, price_cents = ?, tax_category = ?, has_variants = ?, sort_order = ?, updated_at = ?
         WHERE id = ?
-      `).run(name.trim(), category, price_cents, cat.tax_category, hasVariantsVal, Number(sort_order), now, id)
+      `).run(name.trim(), category, effectivePrice, cat.tax_category, hasVariantsVal, Number(sort_order), now, id)
     : db.prepare(`
         UPDATE products SET name = ?, category = ?, price_cents = ?, tax_category = ?, sort_order = ?, updated_at = ?
         WHERE id = ?
-      `).run(name.trim(), category, price_cents, cat.tax_category, Number(sort_order), now, id);
+      `).run(name.trim(), category, effectivePrice, cat.tax_category, Number(sort_order), now, id);
 
   if (changes === 0) return void res.status(404).json({ error: 'not found' });
 
