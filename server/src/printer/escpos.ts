@@ -1,4 +1,4 @@
-import type { Tab } from '@downtown/shared';
+import type { Tab, ShiftSummary } from '@downtown/shared';
 
 // TM-M30 III @ 80mm paper: Font A = 48 chars
 const W_A = 48;
@@ -308,5 +308,76 @@ export function buildTestPage(): Buffer {
     line(now), divider('='), LF,
     FEED_CUT,
   ];
+  return Buffer.concat(p);
+}
+
+export function buildShiftReport(s: ShiftSummary): Buffer {
+  const p: Buffer[] = [];
+
+  p.push(ESC_INIT, CODEPAGE_CP1252);
+
+  // ── header ───────────────────────────────────────────────────
+  p.push(ALIGN_CENTER, BOLD_ON, DBL_HEIGHT_ON);
+  p.push(line('Downtown Darmstadt'));
+  p.push(DBL_HEIGHT_OFF, BOLD_OFF);
+  p.push(line('SCHICHTBERICHT'));
+  p.push(LF, ALIGN_LEFT, divider('='));
+
+  // ── shift period ─────────────────────────────────────────────
+  p.push(col('Start:', berlinDT(s.session.opened_at)));
+  if (s.session.closed_at) p.push(col('Ende:', berlinDT(s.session.closed_at)));
+  p.push(divider('='));
+
+  // ── overview ─────────────────────────────────────────────────
+  p.push(BOLD_ON, col('Gesamtumsatz', euro(s.total_cents)), BOLD_OFF);
+  p.push(col('Tabs abgeschlossen', String(s.tab_count)));
+  p.push(col('Durchschnitt / Tab', euro(s.avg_tab_cents)));
+  p.push(col(`Trinkgeld`, euro(s.tip_cents)));
+  p.push(divider('-'));
+
+  // ── payment breakdown ─────────────────────────────────────────
+  p.push(col(`Bar (${s.cash_count}x)`, euro(s.cash_cents)));
+  p.push(col(`EC-Karte (${s.card_count}x)`, euro(s.card_cents)));
+  p.push(divider('-'));
+
+  // ── revenue by top category ───────────────────────────────────
+  p.push(line('Umsatz nach Kategorie:'));
+  for (const row of s.by_top_category) {
+    p.push(col(`  ${row.category}`, euro(row.total_cents)));
+  }
+  p.push(divider('-'));
+
+  // ── top 3 drinks ──────────────────────────────────────────────
+  if (s.top_drinks.length > 0) {
+    p.push(line('Top Getr\xE4nke:')); // ä = 0xE4
+    for (let i = 0; i < s.top_drinks.length; i++) {
+      const d = s.top_drinks[i];
+      const label = `  ${i + 1}. ${d.name}`;
+      p.push(col(label, `${d.qty}x`));
+    }
+    p.push(LF);
+  }
+
+  // ── top 3 food ────────────────────────────────────────────────
+  if (s.top_food.length > 0) {
+    p.push(line('Top Speisen:'));
+    for (let i = 0; i < s.top_food.length; i++) {
+      const f = s.top_food[i];
+      const label = `  ${i + 1}. ${f.name}`;
+      p.push(col(label, `${f.qty}x`));
+    }
+    p.push(LF);
+  }
+
+  // ── tax ───────────────────────────────────────────────────────
+  p.push(divider('-'));
+  p.push(FONT_B);
+  p.push(col('inkl. MwSt. 19%', euro(s.tax_standard_cents)));
+  p.push(col('inkl. MwSt. 7%', euro(s.tax_reduced_cents)));
+  p.push(FONT_A);
+
+  p.push(divider('='), LF);
+  p.push(FEED_CUT);
+
   return Buffer.concat(p);
 }

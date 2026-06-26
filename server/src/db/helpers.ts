@@ -166,21 +166,62 @@ export function summarizeClosedTabs(closed: any[]) {
   const cardTabs = closed.filter((t: any) => t.payment_method === 'card');
 
   const ids = closed.map((t: any) => t.id);
+  const ph = ids.length === 0 ? '' : ids.map(() => '?').join(',');
+
   const by_category = ids.length === 0 ? [] : db.prepare(`
     SELECT COALESCE(p.category, 'Billiard') as category,
            SUM(li.price_snapshot_cents * li.quantity) as total_cents
     FROM line_items li
     LEFT JOIN products p ON li.product_id = p.id
-    WHERE li.tab_id IN (${ids.map(() => '?').join(',')})
+    WHERE li.tab_id IN (${ph})
     GROUP BY COALESCE(p.category, 'Billiard')
     ORDER BY total_cents DESC
   `).all(...ids) as Array<{ category: string; total_cents: number }>;
+
+  const by_top_category = ids.length === 0 ? [] : db.prepare(`
+    SELECT
+      CASE
+        WHEN li.kind = 'billiard' THEN 'Billard'
+        WHEN li.tax_category_snapshot = 'reduced' THEN 'Essen'
+        ELSE 'Getränke'
+      END as category,
+      SUM(li.price_snapshot_cents * li.quantity) as total_cents
+    FROM line_items li
+    WHERE li.tab_id IN (${ph})
+    GROUP BY category
+    ORDER BY total_cents DESC
+  `).all(...ids) as Array<{ category: string; total_cents: number }>;
+
+  const top_drinks = ids.length === 0 ? [] : db.prepare(`
+    SELECT li.name_snapshot as name, SUM(li.quantity) as qty
+    FROM line_items li
+    WHERE li.tab_id IN (${ph})
+      AND li.kind = 'product'
+      AND li.tax_category_snapshot = 'standard'
+    GROUP BY li.name_snapshot
+    ORDER BY qty DESC
+    LIMIT 3
+  `).all(...ids) as Array<{ name: string; qty: number }>;
+
+  const top_food = ids.length === 0 ? [] : db.prepare(`
+    SELECT li.name_snapshot as name, SUM(li.quantity) as qty
+    FROM line_items li
+    WHERE li.tab_id IN (${ph})
+      AND li.kind = 'product'
+      AND li.tax_category_snapshot = 'reduced'
+    GROUP BY li.name_snapshot
+    ORDER BY qty DESC
+    LIMIT 3
+  `).all(...ids) as Array<{ name: string; qty: number }>;
+
+  const total_cents = sum('total_cents');
+  const avg_tab_cents = closed.length > 0 ? Math.round(total_cents / closed.length) : 0;
 
   return {
     tab_count: closed.length,
     subtotal_cents: sum('subtotal_cents'),
     tip_cents: sum('tip_cents'),
-    total_cents: sum('total_cents'),
+    total_cents,
     tax_cents: sum('tax_cents'),
     tax_standard_cents: sum('tax_standard_cents'),
     tax_reduced_cents: sum('tax_reduced_cents'),
@@ -188,6 +229,10 @@ export function summarizeClosedTabs(closed: any[]) {
     card_cents: cardTabs.reduce((s: number, t: any) => s + (t.total_cents ?? 0), 0),
     cash_count: cashTabs.length,
     card_count: cardTabs.length,
+    avg_tab_cents,
     by_category,
+    by_top_category,
+    top_drinks,
+    top_food,
   };
 }

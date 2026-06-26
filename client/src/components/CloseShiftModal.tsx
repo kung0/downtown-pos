@@ -74,6 +74,10 @@ export default function CloseShiftModal({ onClose }: Props) {
                   <div className="stat-card__value">{summary.tab_count}</div>
                 </div>
                 <div className="stat-card">
+                  <div className="stat-card__label">Avg Tab</div>
+                  <div className="stat-card__value">{formatMoney(summary.avg_tab_cents)}</div>
+                </div>
+                <div className="stat-card">
                   <div className="stat-card__label">Tips</div>
                   <div className="stat-card__value">{formatMoney(summary.tip_cents)}</div>
                 </div>
@@ -92,19 +96,57 @@ export default function CloseShiftModal({ onClose }: Props) {
                 </tbody>
               </table>
 
-              {summary.by_category.length > 0 && (
+              {summary.by_top_category.length > 0 && (
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Category</th>
-                      <th style={{ textAlign: 'right' }}>Revenue</th>
+                      <th>Kategorie</th>
+                      <th style={{ textAlign: 'right' }}>Umsatz</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {summary.by_category.map(row => (
+                    {summary.by_top_category.map(row => (
                       <tr key={row.category}>
                         <td>{row.category}</td>
                         <td style={{ textAlign: 'right' }}>{formatMoney(row.total_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {summary.top_drinks.length > 0 && (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Top Getränke</th>
+                      <th style={{ textAlign: 'right' }}>Anzahl</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.top_drinks.map((d, i) => (
+                      <tr key={d.name}>
+                        <td>{i + 1}. {d.name}</td>
+                        <td style={{ textAlign: 'right' }}>{d.qty}x</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {summary.top_food.length > 0 && (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Top Speisen</th>
+                      <th style={{ textAlign: 'right' }}>Anzahl</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.top_food.map((f, i) => (
+                      <tr key={f.name}>
+                        <td>{i + 1}. {f.name}</td>
+                        <td style={{ textAlign: 'right' }}>{f.qty}x</td>
                       </tr>
                     ))}
                   </tbody>

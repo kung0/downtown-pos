@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import db from '../db/client';
 import { summarizeClosedTabs } from '../db/helpers';
+import { buildShiftReport } from '../printer/escpos';
+import { sendToPrinter } from '../printer/client';
 
 const router = Router();
 
@@ -51,6 +53,13 @@ router.post('/:id/close', (req: Request, res: Response) => {
   const updated = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
   const summary = buildSummary(updated);
   res.json(summary);
+
+  // auto-print shift report (fire and forget — don't block the response)
+  const printerRow = db.prepare("SELECT value FROM settings WHERE key = 'printer_ip'").get() as { value: string } | undefined;
+  const printerIp = printerRow?.value?.trim();
+  if (printerIp) {
+    sendToPrinter(printerIp, buildShiftReport(summary)).catch(() => {});
+  }
 });
 
 // GET /api/sessions/:id/summary — summary for any session

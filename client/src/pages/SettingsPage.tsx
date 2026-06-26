@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import type { Settings } from '@downtown/shared';
-import { settingsApi, printerApi } from '../api';
+import type { Settings, OrderPrinter, Category } from '@downtown/shared';
+import { settingsApi, printerApi, categoriesApi } from '../api';
 import { formatMoney } from '../utils/money';
 
 function parseRate(s: string): number | null {
@@ -50,6 +50,12 @@ export default function SettingsPage() {
   const [testing, setTesting]             = useState(false);
   const [testMsg, setTestMsg]             = useState('');
 
+  // order printers state
+  const [orderPrinters,        setOrderPrinters]        = useState<OrderPrinter[]>([]);
+  const [parentCategories,     setParentCategories]     = useState<Category[]>([]);
+  const [savingOrderPrinters,  setSavingOrderPrinters]  = useState(false);
+  const [savedOrderPrinters,   setSavedOrderPrinters]   = useState(false);
+
   // DSFinV-K state
   const [dsfKassenId,      setDsfKassenId]      = useState('');
   const [dsfBetreiber,     setDsfBetreiber]      = useState('');
@@ -71,6 +77,7 @@ export default function SettingsPage() {
       setDart(toInput(s.dart_hourly_rate_cents));
       setPrinterIp(s.printer_ip ?? '');
       setAutoPrint(s.printer_auto_print ?? false);
+      setOrderPrinters(s.printer_order_printers ?? []);
       setDsfKassenId(s.dsfinvk_kassen_id ?? 'DOWNTOWN-001');
       setDsfBetreiber(s.dsfinvk_betreiber_name ?? '');
       setDsfStrasse(s.dsfinvk_strasse ?? '');
@@ -82,6 +89,7 @@ export default function SettingsPage() {
     }).catch(console.error);
 
     printerApi.status().then(setPrinterStatus).catch(console.error);
+    categoriesApi.list().then(cats => setParentCategories(cats.filter(c => c.parent_id === null))).catch(console.error);
   }, []);
 
   const standardCents = parseRate(standard);
@@ -143,6 +151,21 @@ export default function SettingsPage() {
     } finally {
       setTesting(false);
       setTimeout(() => setTestMsg(''), 4000);
+    }
+  }
+
+  async function handleSaveOrderPrinters() {
+    setSavingOrderPrinters(true);
+    try {
+      const updated = await settingsApi.update({ printer_order_printers: orderPrinters });
+      setSettings(updated);
+      setOrderPrinters(updated.printer_order_printers ?? []);
+      setSavedOrderPrinters(true);
+      setTimeout(() => setSavedOrderPrinters(false), 2000);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSavingOrderPrinters(false);
     }
   }
 
@@ -323,6 +346,87 @@ export default function SettingsPage() {
                 disabled={savingPrinter || !printerDirty}
               >
                 {savingPrinter ? 'Saving…' : savedPrinter ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section__title">Order Printers</div>
+            <div className="settings-section__fields" style={{ gap: 16 }}>
+              {orderPrinters.length === 0 && (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+                  No order printers configured — all order tickets print to the receipt printer above.
+                </p>
+              )}
+              {orderPrinters.map((op, idx) => (
+                <div key={op.id} style={{ border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      className="price-input__field"
+                      placeholder="Name (e.g. Kitchen)"
+                      value={op.name}
+                      onChange={e => setOrderPrinters(prev => prev.map((p, i) => i === idx ? { ...p, name: e.target.value } : p))}
+                      style={{ padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', width: 160, fontSize: 14, background: 'var(--surface)', color: 'var(--text)' }}
+                    />
+                    <input
+                      type="text"
+                      className="price-input__field"
+                      placeholder="192.168.1.101"
+                      value={op.ip}
+                      onChange={e => setOrderPrinters(prev => prev.map((p, i) => i === idx ? { ...p, ip: e.target.value } : p))}
+                      style={{ padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', width: 150, fontFamily: 'monospace', fontSize: 14, background: 'var(--surface)', color: 'var(--text)' }}
+                    />
+                    <button
+                      className="btn"
+                      style={{ marginLeft: 'auto', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                      onClick={() => setOrderPrinters(prev => prev.filter((_, i) => i !== idx))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
+                    {parentCategories.map(cat => (
+                      <label key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={op.category_ids.includes(cat.id)}
+                          onChange={e => setOrderPrinters(prev => prev.map((p, i) => {
+                            if (i !== idx) return p;
+                            const ids = e.target.checked
+                              ? [...p.category_ids, cat.id]
+                              : p.category_ids.filter(id => id !== cat.id);
+                            return { ...p, category_ids: ids };
+                          }))}
+                          style={{ width: 14, height: 14, cursor: 'pointer' }}
+                        />
+                        {cat.name}
+                      </label>
+                    ))}
+                  </div>
+                  {parentCategories.length > 0 && (
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+                      Checked categories and all their subcategories will print here.
+                    </p>
+                  )}
+                </div>
+              ))}
+              <button
+                className="btn"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => setOrderPrinters(prev => [...prev, { id: String(Date.now()), name: '', ip: '', category_ids: [] }])}
+              >
+                + Add printer
+              </button>
+            </div>
+            <div className="settings-section__footer">
+              <span />
+              <button
+                className="btn btn--primary"
+                onClick={handleSaveOrderPrinters}
+                disabled={savingOrderPrinters}
+              >
+                {savingOrderPrinters ? 'Saving…' : savedOrderPrinters ? 'Saved!' : 'Save'}
               </button>
             </div>
           </div>

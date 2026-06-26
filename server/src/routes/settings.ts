@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import db from '../db/client';
-import type { Settings } from '@downtown/shared';
+import type { Settings, OrderPrinter } from '@downtown/shared';
 
 const router = Router();
 
@@ -19,6 +19,7 @@ const DEFAULTS: Settings = {
   dart_hourly_rate_cents: 800,
   printer_ip: '',
   printer_auto_print: false,
+  printer_order_printers: [],
   dsfinvk_kassen_id: 'DOWNTOWN-001',
   dsfinvk_betreiber_name: '',
   dsfinvk_strasse: '',
@@ -28,6 +29,17 @@ const DEFAULTS: Settings = {
   dsfinvk_stnr: '',
   dsfinvk_ustid: '',
 };
+
+function parseOrderPrinters(raw: string | undefined): OrderPrinter[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
 
 export function getSettings(): Settings {
   const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
@@ -39,6 +51,7 @@ export function getSettings(): Settings {
     dart_hourly_rate_cents:           Number(map.dart_hourly_rate_cents)           || DEFAULTS.dart_hourly_rate_cents,
     printer_ip:                       map.printer_ip ?? '',
     printer_auto_print:               map.printer_auto_print === '1',
+    printer_order_printers:           parseOrderPrinters(map.printer_order_printers),
     dsfinvk_kassen_id:       map.dsfinvk_kassen_id       ?? DEFAULTS.dsfinvk_kassen_id,
     dsfinvk_betreiber_name:  map.dsfinvk_betreiber_name  ?? '',
     dsfinvk_strasse:         map.dsfinvk_strasse         ?? '',
@@ -74,6 +87,9 @@ router.patch('/', (req: Request, res: Response) => {
     }
     if ('printer_auto_print' in body) {
       upsert.run('printer_auto_print', body.printer_auto_print ? '1' : '0');
+    }
+    if ('printer_order_printers' in body) {
+      upsert.run('printer_order_printers', JSON.stringify(body.printer_order_printers ?? []));
     }
     const DSF_KEYS = [
       'dsfinvk_kassen_id', 'dsfinvk_betreiber_name', 'dsfinvk_strasse',

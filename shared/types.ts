@@ -191,6 +191,11 @@ export interface Session {
   closed_at: string | null;
 }
 
+export interface TopSeller {
+  name: string;
+  qty: number;
+}
+
 export interface ShiftSummary {
   session: Session;
   tab_count: number;
@@ -203,7 +208,11 @@ export interface ShiftSummary {
   card_cents: number;
   cash_count: number;
   card_count: number;
+  avg_tab_cents: number;
   by_category: Array<{ category: string; total_cents: number }>;
+  by_top_category: Array<{ category: string; total_cents: number }>;
+  top_drinks: TopSeller[];
+  top_food: TopSeller[];
 }
 
 export interface TabEvent {
