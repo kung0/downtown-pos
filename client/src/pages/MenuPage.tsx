@@ -7,6 +7,7 @@ import { buildTree, flattenTree, findNode, collectDescendantIds } from '../utils
 import type { TreeNode } from '../utils/categoryTree';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
+import { ReorderProductsView } from './MenuPageReorder';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,11 @@ export default function MenuPage() {
 
   // ── product actions ──────────────────────────────────────────────────────
 
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
+  );
+
   function enterReorderMode() {
     setDraftProducts([...products]);
     setDraftCategories([...categories]);
@@ -105,7 +111,75 @@ export default function MenuPage() {
     setReorderError(null);
   }
 
-  async function handleSaveProductOrder() { /* Task 7 */ }
+  function onProductDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeId = active.id as number;
+    const overId = over.id;
+
+    // Determine target category
+    let targetCategory: string;
+    let overProductId: number | null = null;
+
+    if (typeof overId === 'string' && overId.startsWith('cat:')) {
+      targetCategory = overId.slice(4);
+    } else {
+      overProductId = overId as number;
+      const overProd = draftProducts.find(p => p.id === overProductId);
+      if (!overProd) return;
+      targetCategory = overProd.category;
+    }
+
+    const activeProd = draftProducts.find(p => p.id === activeId);
+    if (!activeProd) return;
+
+    setDraftProducts(prev => {
+      const withoutActive = prev.filter(p => p.id !== activeId);
+      const movedProd = { ...activeProd, category: targetCategory };
+
+      let insertAt: number;
+      if (overProductId !== null && overProductId !== activeId) {
+        insertAt = withoutActive.findIndex(p => p.id === overProductId);
+        if (insertAt < 0) insertAt = withoutActive.length;
+      } else {
+        // Dropped onto a category zone — append at end of that group
+        const lastInGroup = withoutActive.reduce(
+          (acc, p, i) => (p.category === targetCategory ? i : acc),
+          -1
+        );
+        insertAt = lastInGroup + 1;
+      }
+
+      const result = [...withoutActive];
+      result.splice(insertAt, 0, movedProd);
+
+      // Recalculate sort_order per group
+      const counters = new Map<string, number>();
+      return result.map(p => {
+        const n = counters.get(p.category) ?? 0;
+        counters.set(p.category, n + 1);
+        return { ...p, sort_order: n };
+      });
+    });
+  }
+
+  async function handleSaveProductOrder() {
+    setSavingOrder(true);
+    setReorderError(null);
+    try {
+      await productsApi.reorder(
+        draftProducts.map(p => ({ id: p.id, sort_order: p.sort_order, category: p.category }))
+      );
+      setProducts(draftProducts);
+      setIsReordering(false);
+    } catch (e) {
+      setReorderError((e as Error).message);
+    } finally {
+      setSavingOrder(false);
+    }
+  }
+
   async function handleSaveCategoryOrder() { /* Task 8 */ }
 
   function openCreateProduct() {
@@ -347,86 +421,92 @@ export default function MenuPage() {
 
       {/* ════════════════ PRODUCTS VIEW ════════════════ */}
       {view === 'products' && (
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 52 }}>On</th>
-                <th>Name</th>
-                <th>Kategorie</th>
-                <th>Preis</th>
-                <th style={{ width: 72 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {flatCats
-                .filter(({ cat }) => {
-                  const node = findNode(catTree, cat.id);
-                  return node ? hasProducts(node, products) : false;
-                })
-                .map(({ cat, depth }) => (
-                  <Fragment key={cat.id}>
-                    <tr className={depth === 0 ? 'category-parent-header' : 'category-header'}>
-                      <td colSpan={5} style={depth > 1 ? { paddingLeft: depth * 12 } : undefined}>{cat.name}</td>
-                    </tr>
-                    {products.filter(p => p.category === cat.name).map(p => (
-                      <tr key={p.id}>
-                        <td>
-                          <label className="toggle">
-                            <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
-                            <span className="toggle__slider" />
-                          </label>
-                        </td>
-                        <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
-                          {p.name}
-                        </td>
-                        <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
-                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                          {p.has_variants
-                            ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.variants?.length ?? 0} Varianten</span>
-                            : formatMoney(p.price_cents)}
-                        </td>
-                        <td>
-                          <button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button>
-                        </td>
+        isReordering ? (
+          <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onProductDragEnd}>
+            <ReorderProductsView draftProducts={draftProducts} categories={categories} />
+          </DndContext>
+        ) : (
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 52 }}>On</th>
+                  <th>Name</th>
+                  <th>Kategorie</th>
+                  <th>Preis</th>
+                  <th style={{ width: 72 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {flatCats
+                  .filter(({ cat }) => {
+                    const node = findNode(catTree, cat.id);
+                    return node ? hasProducts(node, products) : false;
+                  })
+                  .map(({ cat, depth }) => (
+                    <Fragment key={cat.id}>
+                      <tr className={depth === 0 ? 'category-parent-header' : 'category-header'}>
+                        <td colSpan={5} style={depth > 1 ? { paddingLeft: depth * 12 } : undefined}>{cat.name}</td>
                       </tr>
-                    ))}
-                  </Fragment>
-                ))}
-              {/* Uncategorized — products whose category isn't in any tree node */}
-              {(() => {
-                const knownCats = new Set(categories.map(c => c.name));
-                const orphans = products.filter(p => !knownCats.has(p.category));
-                if (orphans.length === 0) return null;
-                return (
-                  <Fragment>
-                    <tr className="category-parent-header"><td colSpan={5}>Andere</td></tr>
-                    {orphans.map(p => (
-                      <tr key={p.id}>
-                        <td>
-                          <label className="toggle">
-                            <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
-                            <span className="toggle__slider" />
-                          </label>
-                        </td>
-                        <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
-                          {p.name}
-                        </td>
-                        <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
-                        <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                          {p.has_variants
-                            ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.variants?.length ?? 0} Varianten</span>
-                            : formatMoney(p.price_cents)}
-                        </td>
-                        <td><button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button></td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                );
-              })()}
-            </tbody>
-          </table>
-        </div>
+                      {products.filter(p => p.category === cat.name).map(p => (
+                        <tr key={p.id}>
+                          <td>
+                            <label className="toggle">
+                              <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
+                              <span className="toggle__slider" />
+                            </label>
+                          </td>
+                          <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
+                            {p.name}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
+                          <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {p.has_variants
+                              ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.variants?.length ?? 0} Varianten</span>
+                              : formatMoney(p.price_cents)}
+                          </td>
+                          <td>
+                            <button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                {/* Uncategorized — products whose category isn't in any tree node */}
+                {(() => {
+                  const knownCats = new Set(categories.map(c => c.name));
+                  const orphans = products.filter(p => !knownCats.has(p.category));
+                  if (orphans.length === 0) return null;
+                  return (
+                    <Fragment>
+                      <tr className="category-parent-header"><td colSpan={5}>Andere</td></tr>
+                      {orphans.map(p => (
+                        <tr key={p.id}>
+                          <td>
+                            <label className="toggle">
+                              <input type="checkbox" checked={p.available} onChange={() => handleToggle(p)} />
+                              <span className="toggle__slider" />
+                            </label>
+                          </td>
+                          <td style={{ color: p.available ? 'inherit' : 'var(--text-muted)', textDecoration: p.available ? 'none' : 'line-through' }}>
+                            {p.name}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.category}</td>
+                          <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {p.has_variants
+                              ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.variants?.length ?? 0} Varianten</span>
+                              : formatMoney(p.price_cents)}
+                          </td>
+                          <td><button className="btn btn--ghost btn--sm" onClick={() => openEditProduct(p)}>Edit</button></td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
 
       {/* ════════════════ CATEGORIES VIEW ════════════════ */}
