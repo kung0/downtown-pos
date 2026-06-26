@@ -160,8 +160,8 @@ router.post('/:id/variants', (req: Request, res: Response) => {
   if (!name?.trim()) return void res.status(400).json({ error: 'name is required' });
   if (!Number.isInteger(price_cents)) return void res.status(400).json({ error: 'price_cents must be an integer' });
 
-  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
-  if (!product) return void res.status(404).json({ error: 'product not found' });
+  const exists = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
+  if (!exists) return void res.status(404).json({ error: 'product not found' });
 
   const now = new Date().toISOString();
   const { lastInsertRowid } = db.prepare(`
@@ -170,6 +170,8 @@ router.post('/:id/variants', (req: Request, res: Response) => {
   `).run(productId, name.trim(), price_cents, Number(sort_order), now);
 
   const variant = normalizeVariant(db.prepare('SELECT * FROM product_variants WHERE id = ?').get(lastInsertRowid)!);
+  const product = attachVariants([normalize(db.prepare('SELECT * FROM products WHERE id = ?').get(productId)!)])[0];
+  broadcast({ type: 'menu:product_updated', data: product });
   res.status(201).json(variant);
 });
 
@@ -189,6 +191,8 @@ router.put('/:id/variants/:vid', (req: Request, res: Response) => {
   if (changes === 0) return void res.status(404).json({ error: 'variant not found' });
 
   const variant = normalizeVariant(db.prepare('SELECT * FROM product_variants WHERE id = ?').get(variantId)!);
+  const product = attachVariants([normalize(db.prepare('SELECT * FROM products WHERE id = ?').get(productId)!)])[0];
+  broadcast({ type: 'menu:product_updated', data: product });
   res.json(variant);
 });
 
@@ -203,6 +207,8 @@ router.patch('/:id/variants/:vid/availability', (req: Request, res: Response) =>
   if (changes === 0) return void res.status(404).json({ error: 'variant not found' });
 
   const variant = normalizeVariant(db.prepare('SELECT * FROM product_variants WHERE id = ?').get(variantId)!);
+  const product = attachVariants([normalize(db.prepare('SELECT * FROM products WHERE id = ?').get(productId)!)])[0];
+  broadcast({ type: 'menu:product_updated', data: product });
   res.json(variant);
 });
 
@@ -216,6 +222,8 @@ router.delete('/:id/variants/:vid', (req: Request, res: Response) => {
 
   if (changes === 0) return void res.status(404).json({ error: 'variant not found' });
 
+  const product = attachVariants([normalize(db.prepare('SELECT * FROM products WHERE id = ?').get(productId)!)])[0];
+  broadcast({ type: 'menu:product_updated', data: product });
   res.json({ id: variantId });
 });
 

@@ -504,10 +504,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.product.name}</div>
+                <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {item.product.name}{item.variantName && <span style={{ color: 'var(--text-muted)' }}> ({item.variantName})</span>}
+                </div>
                 {item.note && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{item.note}</div>}
               </div>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{formatMoney(item.product.price_cents * item.quantity)}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{formatMoney((item.variantPrice ?? item.product.price_cents) * item.quantity)}</span>
               <button
                 className="btn btn--ghost btn--icon"
                 style={{ minWidth: 28, minHeight: 28, fontSize: 15, flexShrink: 0 }}
@@ -978,7 +980,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         const tip = parseMoney(directPayTip);
         const { standard: taxStd, reduced: taxRed } = computeTax(
           cart.map(c => ({
-            price_snapshot_cents: c.product.price_cents,
+            price_snapshot_cents: c.variantPrice ?? c.product.price_cents,
             tax_category_snapshot: c.product.tax_category,
             quantity: c.quantity,
           }) as any)
