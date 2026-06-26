@@ -5,7 +5,7 @@ import type { CategoryInput } from '../api';
 import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../utils/money';
 import { buildTree, flattenTree, findNode, collectDescendantIds } from '../utils/categoryTree';
 import type { TreeNode } from '../utils/categoryTree';
-import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent, DragMoveEvent } from '@dnd-kit/core';
 import { ReorderProductsView, ReorderCategoriesView } from './MenuPageReorder';
 import { applyCategoryReorder, detectCycle } from '../utils/categoryTree';
@@ -203,10 +203,13 @@ export default function MenuPage() {
     const { active, over } = event;
     setDragActiveId(null);
 
-    if (!over) { setDragDepth(0); return; }
+    if (!over || active.id === over.id) {
+      setDragDepth(0);
+      return;
+    }
 
     const activeId = active.id as number;
-    const overId = active.id === over.id ? null : (over.id as number);
+    const overId = over.id as number;
 
     setDraftCategories(prev => applyCategoryReorder(prev, activeId, overId, dragDepth));
     setDragDepth(0);
