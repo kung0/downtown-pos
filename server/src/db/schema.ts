@@ -136,9 +136,10 @@ export function initSchema(): void {
   try { db.exec('ALTER TABLE products ADD COLUMN has_variants INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE line_items ADD COLUMN variant_id INTEGER REFERENCES product_variants(id)'); } catch {}
 
-  // Set correct tax_category based on product category (idempotent)
+  // Set correct tax_category based on product category (idempotent).
+  // Food sections → 7% reduced; drink/café sections → 19% standard.
   db.exec(`
-    UPDATE products SET tax_category = 'reduced'  WHERE category IN ('Food', 'Snacks', 'Mittagsangebot');
-    UPDATE products SET tax_category = 'standard' WHERE category IN ('Drinks', 'Coffee & Matcha', 'Bier & Wein', 'Aperitifs', 'Cocktails', 'Shots', 'Softdrinks');
+    UPDATE products SET tax_category = 'reduced'  WHERE category IN ('Mittagsangebot', 'Finger Food', 'Nudeln - Suppe', 'Nudeln - Trocken', 'Reis', 'Dessert', 'Food', 'Snacks');
+    UPDATE products SET tax_category = 'standard' WHERE category IN ('Warm Coffee', 'Iced Coffee', 'Iced Matcha', 'Aperitifs', 'Bier & Wein', 'Cocktails', 'Shots', 'Softdrinks', 'Coffee & Matcha', 'Drinks');
   `);
 }
