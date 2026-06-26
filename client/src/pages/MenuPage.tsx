@@ -131,10 +131,10 @@ export default function MenuPage() {
       targetCategory = overProd.category;
     }
 
-    const activeProd = draftProducts.find(p => p.id === activeId);
-    if (!activeProd) return;
-
     setDraftProducts(prev => {
+      const activeProd = prev.find(p => p.id === activeId);
+      if (!activeProd) return prev;
+
       const withoutActive = prev.filter(p => p.id !== activeId);
       const movedProd = { ...activeProd, category: targetCategory };
 
