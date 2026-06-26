@@ -69,6 +69,7 @@ export interface Tab {
   tax_cents: number | null;
   tax_standard_cents: number | null;
   tax_reduced_cents: number | null;
+  discount_cents: number;
   void_reason: string | null;
   voided_at: string | null;
   deleted_at: string | null;

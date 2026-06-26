@@ -96,16 +96,16 @@ export const tabsApi = {
     req<Tab>(`/tabs/${tabId}/items`, { method: 'POST', body: JSON.stringify({ product_id, quantity, note, variant_id }) }),
   removeItem: (tabId: number, itemId: number) =>
     req<Tab>(`/tabs/${tabId}/items/${itemId}`, { method: 'DELETE' }),
-  close: (tabId: number, payment_method: 'cash' | 'card', tip_cents: number) =>
-    req<Tab>(`/tabs/${tabId}/close`, { method: 'POST', body: JSON.stringify({ payment_method, tip_cents }) }),
+  close: (tabId: number, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
+    req<Tab>(`/tabs/${tabId}/close`, { method: 'POST', body: JSON.stringify({ payment_method, tip_cents, discount_cents }) }),
   delete: (tabId: number) =>
     req<{ id: number }>(`/tabs/${tabId}`, { method: 'DELETE' }),
-  quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number }>, payment_method: 'cash' | 'card', tip_cents: number) =>
-    req<Tab>('/tabs/quick-pay', { method: 'POST', body: JSON.stringify({ items, payment_method, tip_cents }) }),
-  splitPay: (tabId: number, items: Array<{ id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number) =>
+  quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
+    req<Tab>('/tabs/quick-pay', { method: 'POST', body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }) }),
+  splitPay: (tabId: number, items: Array<{ id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
     req<{ paid_tab: Tab; remaining_tab: Tab }>(`/tabs/${tabId}/split-pay`, {
       method: 'POST',
-      body: JSON.stringify({ items, payment_method, tip_cents }),
+      body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }),
     }),
   history: (sessionId?: number) => req<Tab[]>('/tabs/history' + (sessionId != null ? `?session_id=${sessionId}` : '')),
   events: (tabId: number) => req<TabEvent[]>(`/tabs/${tabId}/events`),

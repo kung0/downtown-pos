@@ -106,13 +106,18 @@ export function buildReceipt(tab: Tab, opts: { bewirtung?: boolean } = {}): Buff
   p.push(divider('-'));
 
   // ── financials ───────────────────────────────────────────────
-  const hasStd = (tab.tax_standard_cents ?? 0) > 0;
-  const hasRed = (tab.tax_reduced_cents ?? 0) > 0;
-  const hasTip = tab.tip_cents > 0;
+  const hasStd      = (tab.tax_standard_cents ?? 0) > 0;
+  const hasRed      = (tab.tax_reduced_cents ?? 0) > 0;
+  const hasTip      = tab.tip_cents > 0;
+  const hasDiscount = (tab.discount_cents ?? 0) > 0;
 
-  // Show subtotal row only when tip exists (otherwise it would duplicate GESAMT)
-  if (hasTip && tab.subtotal_cents != null) {
+  // Show subtotal row when there's a discount or tip (otherwise it duplicates GESAMT)
+  if ((hasTip || hasDiscount) && tab.subtotal_cents != null) {
     p.push(col('Zwischensumme', euro(tab.subtotal_cents)));
+  }
+
+  if (hasDiscount) {
+    p.push(col('Rabatt', `-${euro(tab.discount_cents!)}`));
   }
 
   if (hasStd) {

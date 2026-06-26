@@ -5,7 +5,7 @@ import type { TseResult } from '../services/tse';
 interface TabRow {
   id: number; customer_name: string; notes: string | null; status: string; opened_at: string;
   closed_at: string | null; payment_method: string | null; subtotal_cents: number | null;
-  tip_cents: number; total_cents: number | null; tax_cents: number | null;
+  discount_cents: number; tip_cents: number; total_cents: number | null; tax_cents: number | null;
   tax_standard_cents: number | null; tax_reduced_cents: number | null;
   void_reason: string | null; voided_at: string | null; deleted_at: string | null; original_tab_id: number | null;
   card_auth_code: string | null; card_masked_pan: string | null;
@@ -80,10 +80,32 @@ export function computeTaxBreakdown(
   };
 }
 
+// Proportionally reduces standard/reduced subtotals and recomputes tax on the
+// discounted amounts. The returned subtotal_cents = original - discount.
+export function applyDiscountToTax(tax: TaxBreakdown, discount_cents: number): TaxBreakdown {
+  if (discount_cents <= 0 || tax.subtotal_cents === 0) return tax;
+  const disc = Math.min(discount_cents, tax.subtotal_cents);
+  const disc_std = Math.round(disc * tax.subtotal_standard_cents / tax.subtotal_cents);
+  const disc_red = disc - disc_std;
+  const std = tax.subtotal_standard_cents - disc_std;
+  const red = tax.subtotal_reduced_cents - disc_red;
+  const tax_std = Math.round(std * 19 / 119);
+  const tax_red = Math.round(red * 7 / 107);
+  return {
+    subtotal_cents: std + red,
+    subtotal_standard_cents: std,
+    subtotal_reduced_cents: red,
+    tax_standard_cents: tax_std,
+    tax_reduced_cents: tax_red,
+    tax_cents: tax_std + tax_red,
+  };
+}
+
 export interface CloseSaleParams {
   closed_at: string;
   payment_method: string;
-  tax: TaxBreakdown;
+  tax: TaxBreakdown;      // post-discount; tax.subtotal_cents = original_subtotal - discount
+  discount_cents?: number;
   tip_cents: number;
   total_cents: number;
   card_auth_code: string | null;
@@ -94,12 +116,16 @@ export interface CloseSaleParams {
 // Marks a tab closed with finalized financials + TSE fields. Single UPDATE,
 // shared by close / quick-pay / split-pay so the column set can't drift.
 export function writeClose(tabId: number, p: CloseSaleParams): void {
+  const disc = p.discount_cents ?? 0;
+  // tax.subtotal_cents is post-discount; add discount back to store the original item total
+  const originalSubtotal = p.tax.subtotal_cents + disc;
   db.prepare(`
     UPDATE tabs SET
       status = 'closed',
       closed_at = ?,
       payment_method = ?,
       subtotal_cents = ?,
+      discount_cents = ?,
       tax_cents = ?,
       tax_standard_cents = ?,
       tax_reduced_cents = ?,
@@ -118,7 +144,8 @@ export function writeClose(tabId: number, p: CloseSaleParams): void {
     WHERE id = ?
   `).run(
     p.closed_at, p.payment_method,
-    p.tax.subtotal_cents, p.tax.tax_cents, p.tax.tax_standard_cents, p.tax.tax_reduced_cents,
+    originalSubtotal, disc,
+    p.tax.tax_cents, p.tax.tax_standard_cents, p.tax.tax_reduced_cents,
     p.tax.subtotal_standard_cents, p.tax.subtotal_reduced_cents,
     p.tip_cents, p.total_cents, p.card_auth_code, p.card_masked_pan,
     p.tse?.tse_signature ?? null,

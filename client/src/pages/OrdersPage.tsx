@@ -60,6 +60,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [showClose, setShowClose]       = useState(false);
   const [payMethod, setPayMethod]       = useState<'cash' | 'card'>('cash');
   const [tipInput, setTipInput]         = useState('');
+  const [discountInput, setDiscountInput] = useState('');
+  const [discountType, setDiscountType] = useState<'flat' | 'pct'>('pct');
   const [closing, setClosing]           = useState(false);
   const [receipt, setReceipt]           = useState<import('@downtown/shared').Tab | null>(null);
   const [printing, setPrinting]         = useState(false);
@@ -68,6 +70,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [showDirectPay, setShowDirectPay] = useState(false);
   const [directPayMethod, setDirectPayMethod] = useState<'cash' | 'card'>('cash');
   const [directPayTip, setDirectPayTip]   = useState('');
+  const [directPayDiscount, setDirectPayDiscount] = useState('');
+  const [directPayDiscountType, setDirectPayDiscountType] = useState<'flat' | 'pct'>('pct');
   const [directPaying, setDirectPaying]   = useState(false);
   const [, setTick] = useState(0);
   const [sessionTicks, setSessionTicks] = useState<Record<number, { elapsed_seconds: number; running_cost_cents: number }>>({});
@@ -77,6 +81,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [splitBilliardInputs, setSplitBilliardInputs] = useState<Record<number, string>>({});
   const [splitPayMethod, setSplitPayMethod] = useState<'cash' | 'card'>('cash');
   const [splitTipInput, setSplitTipInput] = useState('');
+  const [splitDiscountInput, setSplitDiscountInput] = useState('');
+  const [splitDiscountType, setSplitDiscountType] = useState<'flat' | 'pct'>('pct');
   const [splitting, setSplitting] = useState(false);
   const [itemQtyOverrides, setItemQtyOverrides] = useState<Record<number, number>>({});
   const [highlightedKey, setHighlightedKey] = useState<number | null>(null);
@@ -95,6 +101,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const cartQty   = (id: number) => cart.filter(c => c.product.id === id).reduce((s, c) => s + c.quantity, 0);
   const cartTotal = cart.reduce((s, c) => s + (c.variantPrice ?? c.product.price_cents) * c.quantity, 0);
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
+
+  function computeDiscount(input: string, type: 'flat' | 'pct', subtotalCents: number): number {
+    if (type === 'flat') return Math.min(parseMoney(input), subtotalCents);
+    const pct = parseFloat(input.trim().replace(',', '.'));
+    if (isNaN(pct) || pct <= 0) return 0;
+    return Math.min(Math.round(subtotalCents * Math.min(100, pct) / 100), subtotalCents);
+  }
 
   function cartAdd(product: Product) {
     if (product.has_variants) {
@@ -315,18 +328,21 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   function openDirectPay() {
     setDirectPayMethod('cash');
     setDirectPayTip('');
+    setDirectPayDiscount('');
+    setDirectPayDiscountType('pct');
     setShowDirectPay(true);
   }
 
   async function handleDirectPay() {
     if (directPaying || cartCount === 0) return;
-    const tipCents = parseMoney(directPayTip);
+    const tipCents      = parseMoney(directPayTip);
+    const discountCents = computeDiscount(directPayDiscount, directPayDiscountType, cartTotal);
     const items    = cart.map(c => ({ product_id: c.product.id, quantity: c.quantity, variant_id: c.variantId }));
     const orderLines = cartOrderLines();
 
     setDirectPaying(true);
     try {
-      const closed = await tabsApi.quickPay(items, directPayMethod, tipCents);
+      const closed = await tabsApi.quickPay(items, directPayMethod, tipCents, discountCents);
       firePrintOrder(closed.customer_name, orderLines);
       setCart([]);
       setShowDirectPay(false);
@@ -427,6 +443,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setSplitBilliardInputs({});
     setSplitPayMethod('cash');
     setSplitTipInput('');
+    setSplitDiscountInput('');
+    setSplitDiscountType('pct');
     setShowSplit(true);
   }
 
@@ -449,10 +467,15 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     });
     if (items.length === 0) return;
     const tipCents = parseMoney(splitTipInput);
+    const splitSubtotalForDiscount = (selectedTab?.items ?? []).reduce((s, i) => {
+      if (i.kind === 'billiard') return s + Math.min(i.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[i.id] ?? '')));
+      return s + i.price_snapshot_cents * (splitQtys[i.id] ?? 0);
+    }, 0);
+    const discountCents = computeDiscount(splitDiscountInput, splitDiscountType, splitSubtotalForDiscount);
 
     setSplitting(true);
     try {
-      const result = await tabsApi.splitPay(selectedId, items, splitPayMethod, tipCents);
+      const result = await tabsApi.splitPay(selectedId, items, splitPayMethod, tipCents, discountCents);
       updateTab(result.remaining_tab);
       setShowSplit(false);
       setReceipt(result.paid_tab);
@@ -467,16 +490,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   function openCloseModal() {
     setPayMethod('cash');
     setTipInput('');
+    setDiscountInput('');
+    setDiscountType('pct');
     setShowClose(true);
   }
 
   async function handleCloseTab() {
     if (!selectedId || closing) return;
-    const tipCents = parseMoney(tipInput);
+    const tipCents      = parseMoney(tipInput);
+    const discountCents = computeDiscount(discountInput, discountType, selectedTab?.running_total_cents ?? 0);
 
     setClosing(true);
     try {
-      const closed = await tabsApi.close(selectedId, payMethod, tipCents);
+      const closed = await tabsApi.close(selectedId, payMethod, tipCents, discountCents);
       setTabs(prev => prev.filter(t => t.id !== closed.id));
       setSelectedId(null);
       setShowClose(false);
@@ -980,15 +1006,17 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
       {/* ── Direct pay modal ────────────────────────────────── */}
       {showDirectPay && (() => {
-        const tip = parseMoney(directPayTip);
+        const tip      = parseMoney(directPayTip);
+        const discount = computeDiscount(directPayDiscount, directPayDiscountType, cartTotal);
         const { standard: taxStd, reduced: taxRed } = computeTax(
           cart.map(c => ({
             price_snapshot_cents: c.variantPrice ?? c.product.price_cents,
             tax_category_snapshot: c.product.tax_category,
             quantity: c.quantity,
-          }) as any)
+          }) as any),
+          discount
         );
-        const total = cartTotal + tip;
+        const total = cartTotal - discount + tip;
         return (
           <div className="modal-overlay" onClick={() => setShowDirectPay(false)}>
             <div className="modal" onClick={e => e.stopPropagation()}>
@@ -1019,11 +1047,41 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     />
                   </div>
                 </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <label className="field__label" style={{ marginBottom: 0 }}>Discount (optional)</label>
+                    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', fontSize: 12 }}>
+                      {(['pct', 'flat'] as const).map(t => (
+                        <button key={t} type="button"
+                          onClick={() => { setDirectPayDiscountType(t); setDirectPayDiscount(''); }}
+                          style={{ padding: '2px 8px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                            background: directPayDiscountType === t ? '#3b82f6' : 'transparent',
+                            color: directPayDiscountType === t ? '#fff' : 'var(--text-muted)' }}
+                        >{t === 'pct' ? '%' : '€'}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="price-input">
+                    <span className="price-input__prefix">{directPayDiscountType === 'flat' ? '€' : '%'}</span>
+                    <input
+                      className="field__input"
+                      placeholder={directPayDiscountType === 'flat' ? '0,00' : '0–100'}
+                      value={directPayDiscount}
+                      onChange={e => setDirectPayDiscount(e.target.value)}
+                    />
+                  </div>
+                </div>
                 <div className="pay-summary">
                   <div className="pay-summary__row">
                     <span>Subtotal</span>
                     <span>{formatMoney(cartTotal)}</span>
                   </div>
+                  {discount > 0 && (
+                    <div className="pay-summary__row" style={{ color: 'var(--success, #22c55e)' }}>
+                      <span>Discount{directPayDiscountType === 'pct' ? ` (${directPayDiscount.trim()}%)` : ''}</span>
+                      <span>−{formatMoney(discount)}</span>
+                    </div>
+                  )}
                   {taxStd > 0 && (
                     <div className="pay-summary__row pay-summary__row--muted">
                       <span>inkl. MwSt. 19 %</span>
@@ -1121,13 +1179,15 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             ? getBilliardAmount(item)
             : item.price_snapshot_cents * (splitQtys[item.id] ?? 0);
         const splitSubtotal = allItems.reduce((s, i) => s + getItemAmount(i), 0);
-        const splitTip = parseMoney(splitTipInput);
+        const splitTip      = parseMoney(splitTipInput);
+        const splitDiscount = computeDiscount(splitDiscountInput, splitDiscountType, splitSubtotal);
         const { standard: splitTaxStd, reduced: splitTaxRed } = computeTax(
           allItems.filter(i => getItemAmount(i) > 0).map(i => ({
             ...i, price_snapshot_cents: getItemAmount(i), quantity: 1,
-          }))
+          })),
+          splitDiscount
         );
-        const splitTotal = splitSubtotal + splitTip;
+        const splitTotal = splitSubtotal - splitDiscount + splitTip;
         const allMaxed = allItems.length > 0 && allItems.every(i =>
           i.kind === 'billiard'
             ? getBilliardAmount(i) >= i.price_snapshot_cents
@@ -1247,11 +1307,41 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     />
                   </div>
                 </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <label className="field__label" style={{ marginBottom: 0 }}>Discount (optional)</label>
+                    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', fontSize: 12 }}>
+                      {(['pct', 'flat'] as const).map(t => (
+                        <button key={t} type="button"
+                          onClick={() => { setSplitDiscountType(t); setSplitDiscountInput(''); }}
+                          style={{ padding: '2px 8px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                            background: splitDiscountType === t ? '#3b82f6' : 'transparent',
+                            color: splitDiscountType === t ? '#fff' : 'var(--text-muted)' }}
+                        >{t === 'pct' ? '%' : '€'}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="price-input">
+                    <span className="price-input__prefix">{splitDiscountType === 'flat' ? '€' : '%'}</span>
+                    <input
+                      className="field__input"
+                      placeholder={splitDiscountType === 'flat' ? '0,00' : '0–100'}
+                      value={splitDiscountInput}
+                      onChange={e => setSplitDiscountInput(e.target.value)}
+                    />
+                  </div>
+                </div>
                 <div className="pay-summary" style={{ marginTop: 12 }}>
                   <div className="pay-summary__row">
                     <span>Subtotal</span>
                     <span>{formatMoney(splitSubtotal)}</span>
                   </div>
+                  {splitDiscount > 0 && (
+                    <div className="pay-summary__row" style={{ color: 'var(--success, #22c55e)' }}>
+                      <span>Discount{splitDiscountType === 'pct' ? ` (${splitDiscountInput.trim()}%)` : ''}</span>
+                      <span>−{formatMoney(splitDiscount)}</span>
+                    </div>
+                  )}
                   {splitTaxStd > 0 && (
                     <div className="pay-summary__row pay-summary__row--muted">
                       <span>inkl. MwSt. 19 %</span>
@@ -1298,10 +1388,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
       {/* ── Close & Pay modal ──────────────────────────────── */}
       {showClose && selectedTab && (() => {
-        const subtotal = selectedTab.running_total_cents ?? 0;
-        const tip = parseMoney(tipInput);
-        const { standard: taxStd, reduced: taxRed } = computeTax(selectedTab.items ?? []);
-        const total = subtotal + tip;
+        const subtotal  = selectedTab.running_total_cents ?? 0;
+        const tip       = parseMoney(tipInput);
+        const discount  = computeDiscount(discountInput, discountType, subtotal);
+        const { standard: taxStd, reduced: taxRed } = computeTax(selectedTab.items ?? [], discount);
+        const total = subtotal - discount + tip;
         return (
           <div className="modal-overlay" onClick={() => setShowClose(false)}>
             <div className="modal" onClick={e => e.stopPropagation()}>
@@ -1332,11 +1423,41 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     />
                   </div>
                 </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <label className="field__label" style={{ marginBottom: 0 }}>Discount (optional)</label>
+                    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', fontSize: 12 }}>
+                      {(['pct', 'flat'] as const).map(t => (
+                        <button key={t} type="button"
+                          onClick={() => { setDiscountType(t); setDiscountInput(''); }}
+                          style={{ padding: '2px 8px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                            background: discountType === t ? '#3b82f6' : 'transparent',
+                            color: discountType === t ? '#fff' : 'var(--text-muted)' }}
+                        >{t === 'pct' ? '%' : '€'}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="price-input">
+                    <span className="price-input__prefix">{discountType === 'flat' ? '€' : '%'}</span>
+                    <input
+                      className="field__input"
+                      placeholder={discountType === 'flat' ? '0,00' : '0–100'}
+                      value={discountInput}
+                      onChange={e => setDiscountInput(e.target.value)}
+                    />
+                  </div>
+                </div>
                 <div className="pay-summary">
                   <div className="pay-summary__row">
                     <span>Subtotal</span>
                     <span>{formatMoney(subtotal)}</span>
                   </div>
+                  {discount > 0 && (
+                    <div className="pay-summary__row" style={{ color: 'var(--success, #22c55e)' }}>
+                      <span>Discount{discountType === 'pct' ? ` (${discountInput.trim()}%)` : ''}</span>
+                      <span>−{formatMoney(discount)}</span>
+                    </div>
+                  )}
                   {taxStd > 0 && (
                     <div className="pay-summary__row pay-summary__row--muted">
                       <span>inkl. MwSt. 19 %</span>
@@ -1408,6 +1529,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <span>Subtotal</span>
                   <span>{formatMoney(receipt.subtotal_cents ?? 0)}</span>
                 </div>
+                {(receipt.discount_cents ?? 0) > 0 && (
+                  <div className="pay-summary__row" style={{ color: 'var(--success, #22c55e)' }}>
+                    <span>Discount</span>
+                    <span>−{formatMoney(receipt.discount_cents)}</span>
+                  </div>
+                )}
                 {(receipt.tax_standard_cents ?? 0) > 0 && (
                   <div className="pay-summary__row pay-summary__row--muted">
                     <span>inkl. MwSt. 19 %</span>

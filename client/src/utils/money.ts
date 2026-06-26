@@ -24,17 +24,21 @@ export function computeTax(items: Array<{
   price_snapshot_cents: number;
   quantity: number;
   tax_category_snapshot: string;
-}>): { standard: number; reduced: number } {
-  let standard = 0, reduced = 0;
+}>, discount_cents = 0): { standard: number; reduced: number } {
+  let stdSubtotal = 0, redSubtotal = 0;
   for (const item of items) {
     const lineTotal = item.price_snapshot_cents * item.quantity;
-    if (item.tax_category_snapshot === 'reduced') {
-      reduced += Math.round(lineTotal * 7 / 107);
-    } else {
-      standard += Math.round(lineTotal * 19 / 119);
-    }
+    if (item.tax_category_snapshot === 'reduced') redSubtotal += lineTotal;
+    else stdSubtotal += lineTotal;
   }
-  return { standard, reduced };
+  const subtotal = stdSubtotal + redSubtotal;
+  const disc = subtotal > 0 ? Math.min(discount_cents, subtotal) : 0;
+  const discStd = subtotal > 0 ? Math.round(disc * stdSubtotal / subtotal) : 0;
+  const discRed = disc - discStd;
+  return {
+    standard: Math.round((stdSubtotal - discStd) * 19 / 119),
+    reduced:  Math.round((redSubtotal - discRed) * 7 / 107),
+  };
 }
 
 export function centsToInputValue(cents: number): string {

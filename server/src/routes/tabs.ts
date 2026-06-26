@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import db from '../db/client';
-import { buildTab, logEvent, computeTaxBreakdown, writeClose } from '../db/helpers';
+import { buildTab, logEvent, computeTaxBreakdown, applyDiscountToTax, writeClose } from '../db/helpers';
 import { broadcast } from '../ws/server';
 import { signOrOffline } from '../services/tse';
 import { buildReceipt } from '../printer/escpos';
@@ -62,7 +62,7 @@ router.get('/', (_req: Request, res: Response) => {
 
 // POST /api/tabs/quick-pay — pay immediately without keeping a tab open
 router.post('/quick-pay', async (req: Request, res: Response) => {
-  const { items, payment_method, tip_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
+  const { items, payment_method, tip_cents = 0, discount_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
 
   if (!['cash', 'card'].includes(payment_method)) {
     return void res.status(400).json({ error: 'payment_method must be "cash" or "card"' });
@@ -84,6 +84,7 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
   // Phase 1: resolve products and compute financials before the async TSE call
   interface ResolvedItem { product: any; qty: number; itemName: string; itemPrice: number; variantId: number | null; }
   const resolvedItems: ResolvedItem[] = [];
+  const disc = Math.max(0, Math.floor(Number(discount_cents)));
 
   for (const { product_id, quantity = 1, variant_id } of items as Array<{ product_id: number; quantity?: number; variant_id?: number }>) {
     const qty = Math.max(1, Math.floor(Number(quantity)));
@@ -107,11 +108,13 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
     resolvedItems.push({ product, qty, itemName, itemPrice, variantId });
   }
 
-  const tax = computeTaxBreakdown(resolvedItems.map(r => ({
+  const rawTax = computeTaxBreakdown(resolvedItems.map(r => ({
     price_snapshot_cents: r.itemPrice,
     quantity: r.qty,
     tax_category_snapshot: r.product.tax_category,
   })));
+  const discount = Math.min(disc, rawTax.subtotal_cents);
+  const tax = applyDiscountToTax(rawTax, discount);
   const total = tax.subtotal_cents + tip;
 
   // Phase 2: TSE signing (async, before DB transaction)
@@ -141,12 +144,12 @@ router.post('/quick-pay', async (req: Request, res: Response) => {
     }
 
     writeClose(tabId, {
-      closed_at: now, payment_method, tax, tip_cents: tip, total_cents: total,
+      closed_at: now, payment_method, tax, discount_cents: discount, tip_cents: tip, total_cents: total,
       card_auth_code, card_masked_pan, tse,
     });
 
     logEvent('tab_closed', tabId, {
-      payment_method, subtotal: tax.subtotal_cents, tax: tax.tax_cents, tip, total,
+      payment_method, subtotal: tax.subtotal_cents + discount, discount, tax: tax.tax_cents, tip, total,
       tse_transaction_number: tse?.tse_transaction_number ?? null,
     });
 
@@ -361,7 +364,7 @@ router.delete('/:id', (req: Request, res: Response) => {
 //   billiard items → split by amount_cents (e.g. pay 6 € of a 12 € session)
 router.post('/:id/split-pay', async (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
-  const { items: splitItems, payment_method, tip_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
+  const { items: splitItems, payment_method, tip_cents = 0, discount_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
 
   if (!['cash', 'card'].includes(payment_method)) {
     return void res.status(400).json({ error: 'payment_method must be "cash" or "card"' });
@@ -419,11 +422,13 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit',
   });
 
-  const tax = computeTaxBreakdown(dbItems.map((dbItem: any) => ({
+  const rawTaxSplit = computeTaxBreakdown(dbItems.map((dbItem: any) => ({
     price_snapshot_cents: payAmounts.get(dbItem.id)!,
     quantity: 1,
     tax_category_snapshot: dbItem.tax_category_snapshot,
   })));
+  const discSplit = Math.min(Math.max(0, Math.floor(Number(discount_cents))), rawTaxSplit.subtotal_cents);
+  const tax = applyDiscountToTax(rawTaxSplit, discSplit);
   const total = tax.subtotal_cents + tip;
 
   const { tse, error } = await signOrOffline({
@@ -453,12 +458,12 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     }
 
     writeClose(splitTabId, {
-      closed_at: now, payment_method, tax, tip_cents: tip, total_cents: total,
+      closed_at: now, payment_method, tax, discount_cents: discSplit, tip_cents: tip, total_cents: total,
       card_auth_code, card_masked_pan, tse,
     });
 
     logEvent('tab_closed', splitTabId, {
-      payment_method, subtotal: tax.subtotal_cents, tax: tax.tax_cents, tip, total,
+      payment_method, subtotal: tax.subtotal_cents + discSplit, discount: discSplit, tax: tax.tax_cents, tip, total,
       split_from_tab_id: tabId,
     });
 
@@ -505,7 +510,7 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
 // POST /api/tabs/:id/close
 router.post('/:id/close', async (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
-  const { payment_method, tip_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
+  const { payment_method, tip_cents = 0, discount_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
 
   if (!['cash', 'card'].includes(payment_method)) {
     return void res.status(400).json({ error: 'payment_method must be "cash" or "card"' });
@@ -522,7 +527,9 @@ router.post('/:id/close', async (req: Request, res: Response) => {
   if (activeSession) return void res.status(409).json({ error: 'stop the running table first' });
 
   const tab = buildTab(tabId)!;
-  const tax = computeTaxBreakdown(tab.items ?? []);
+  const rawTaxClose = computeTaxBreakdown(tab.items ?? []);
+  const discClose = Math.min(Math.max(0, Math.floor(Number(discount_cents))), rawTaxClose.subtotal_cents);
+  const tax = applyDiscountToTax(rawTaxClose, discClose);
   const total = tax.subtotal_cents + tip;
 
   const { tse, error } = await signOrOffline({
@@ -537,12 +544,12 @@ router.post('/:id/close', async (req: Request, res: Response) => {
   const now = new Date().toISOString();
 
   writeClose(tabId, {
-    closed_at: now, payment_method, tax, tip_cents: tip, total_cents: total,
+    closed_at: now, payment_method, tax, discount_cents: discClose, tip_cents: tip, total_cents: total,
     card_auth_code, card_masked_pan, tse,
   });
 
   logEvent('tab_closed', tabId, {
-    payment_method, subtotal: tax.subtotal_cents, tax: tax.tax_cents, tip, total,
+    payment_method, subtotal: tax.subtotal_cents + discClose, discount: discClose, tax: tax.tax_cents, tip, total,
     tse_transaction_number: tse?.tse_transaction_number ?? null,
   });
 
