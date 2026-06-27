@@ -86,6 +86,7 @@ export interface Tab {
   subtotal_standard_cents: number | null;
   subtotal_reduced_cents: number | null;
   session_id: number | null;
+  parked: boolean;
   items?: LineItem[];
   running_total_cents?: number;
   active_sessions?: BilliardSession[];
@@ -230,6 +231,8 @@ export type WSEventType =
   | 'tab:voided'
   | 'tab:deleted'
   | 'tab:tse_signed'
+  | 'tab:parked'
+  | 'tab:unparked'
   | 'pool:session_started'
   | 'pool:session_stopped'
   | 'pool:tick'

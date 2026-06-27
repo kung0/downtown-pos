@@ -574,4 +574,32 @@ router.post('/:id/close', async (req: Request, res: Response) => {
   res.json(closedTab);
 });
 
+// PATCH /api/tabs/:id/park — mark tab as parked (customer left without paying)
+router.patch('/:id/park', (req: Request, res: Response) => {
+  const tabId = Number(req.params.id);
+  const tabRow = db.prepare("SELECT * FROM tabs WHERE id = ? AND status = 'open'").get(tabId) as any;
+  if (!tabRow) return void res.status(404).json({ error: 'tab not found or not open' });
+  if (tabRow.parked) return void res.status(409).json({ error: 'tab is already parked' });
+
+  db.prepare('UPDATE tabs SET parked = 1 WHERE id = ?').run(tabId);
+  logEvent('tab_parked', tabId, {});
+  const updated = buildTab(tabId)!;
+  broadcast({ type: 'tab:parked', data: updated });
+  res.json(updated);
+});
+
+// PATCH /api/tabs/:id/unpark — resume a parked tab
+router.patch('/:id/unpark', (req: Request, res: Response) => {
+  const tabId = Number(req.params.id);
+  const tabRow = db.prepare("SELECT * FROM tabs WHERE id = ? AND status = 'open'").get(tabId) as any;
+  if (!tabRow) return void res.status(404).json({ error: 'tab not found or not open' });
+  if (!tabRow.parked) return void res.status(409).json({ error: 'tab is not parked' });
+
+  db.prepare('UPDATE tabs SET parked = 0 WHERE id = ?').run(tabId);
+  logEvent('tab_unparked', tabId, {});
+  const updated = buildTab(tabId)!;
+  broadcast({ type: 'tab:unparked', data: updated });
+  res.json(updated);
+});
+
 export default router;

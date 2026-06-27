@@ -6,7 +6,7 @@ import { formatDateTime, formatTime } from '../utils/time';
 import { formatMoney } from '../utils/money';
 import { useSession } from '../context/SessionContext';
 
-const TRACKED_TAB_EVENTS = new Set<WSMessage['type']>(['tab:opened', 'tab:updated', 'tab:closed', 'tab:voided', 'tab:deleted']);
+const TRACKED_TAB_EVENTS = new Set<WSMessage['type']>(['tab:opened', 'tab:updated', 'tab:closed', 'tab:voided', 'tab:deleted', 'tab:parked', 'tab:unparked']);
 
 export default function HistoryPage() {
   const { session }               = useSession();
@@ -183,9 +183,13 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
             {formatDateTime(displayTime)}
           </div>
         </div>
-        <span className={`badge ${tab.status === 'closed' ? 'badge--green' : tab.status === 'open' ? 'badge--blue' : 'badge--gray'}`}>
-          {tab.status}
-        </span>
+        {tab.status === 'open' && tab.parked ? (
+          <span className="badge badge--amber">Geparkt</span>
+        ) : (
+          <span className={`badge ${tab.status === 'closed' ? 'badge--green' : tab.status === 'open' ? 'badge--blue' : 'badge--gray'}`}>
+            {tab.status}
+          </span>
+        )}
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontWeight: 600, fontSize: '14px' }}>
             {formatMoney(runningTotal)}

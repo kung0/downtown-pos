@@ -356,6 +356,7 @@ select.field__input { cursor: pointer; }
 .badge--green { background: #c6f6d5; color: #276749; }
 .badge--blue  { background: #bee3f8; color: #2b6cb0; }
 .badge--gray  { background: #e2e8f0; color: #4a5568; }
+.badge--amber { background: #fef3c7; color: #92400e; }
 
 /* ── Orders layout ── */
 .orders-layout {
@@ -431,6 +432,8 @@ select.field__input { cursor: pointer; }
 }
 .tab-card:hover { border-color: var(--primary); }
 .tab-card--active { border-color: var(--primary); background: #ebf4ff; }
+.tab-card--parked { border-color: #d97706; opacity: 0.8; }
+.tab-card--parked.tab-card--active { border-color: #d97706; background: #fffbeb; }
 
 .tab-card__name {
   font-weight: 600;

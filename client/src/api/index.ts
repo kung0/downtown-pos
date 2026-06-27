@@ -109,6 +109,8 @@ export const tabsApi = {
     }),
   history: (sessionId?: number) => req<Tab[]>('/tabs/history' + (sessionId != null ? `?session_id=${sessionId}` : '')),
   events: (tabId: number) => req<TabEvent[]>(`/tabs/${tabId}/events`),
+  park: (tabId: number) => req<Tab>(`/tabs/${tabId}/park`, { method: 'PATCH' }),
+  unpark: (tabId: number) => req<Tab>(`/tabs/${tabId}/unpark`, { method: 'PATCH' }),
 };
 
 export const poolApi = {

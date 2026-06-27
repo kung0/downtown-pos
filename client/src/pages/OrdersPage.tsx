@@ -257,7 +257,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {
-      if (msg.type === 'tab:updated') {
+      if (msg.type === 'tab:updated' || msg.type === 'tab:parked' || msg.type === 'tab:unparked') {
         const tab = msg.data as Tab;
         setTabs(prev => {
           const exists = prev.some(t => t.id === tab.id);
@@ -469,6 +469,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     } catch (e) {
       alert((e as Error).message);
     }
+  }
+
+  // ── park / unpark tab ─────────────────────────────────────────
+  async function handleParkTab() {
+    if (!selectedId) return;
+    try { updateTab(await tabsApi.park(selectedId)); }
+    catch (e) { alert((e as Error).message); }
+  }
+
+  async function handleUnparkTab() {
+    if (!selectedId) return;
+    try { updateTab(await tabsApi.unpark(selectedId)); }
+    catch (e) { alert((e as Error).message); }
   }
 
   // ── split payment ────────────────────────────────────────────
@@ -740,10 +753,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           ) : filteredTabs.map(t => (
             <button
               key={t.id}
-              className={`tab-card${t.id === selectedId ? ' tab-card--active' : ''}`}
+              className={`tab-card${t.id === selectedId ? ' tab-card--active' : ''}${t.parked ? ' tab-card--parked' : ''}`}
               onClick={() => { setSelectedId(t.id === selectedId ? null : t.id); setView('detail'); }}
             >
-              <div className="tab-card__name">{t.customer_name}</div>
+              <div className="tab-card__name">
+                {t.customer_name}
+                {t.parked && <span className="badge badge--amber" style={{ marginLeft: 6, fontSize: 10 }}>Geparkt</span>}
+              </div>
               <div className="tab-card__meta">
                 <span>{elapsed(t.opened_at)}</span>
                 <span>{formatMoney(t.running_total_cents ?? 0)}</span>
@@ -852,6 +868,15 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 </div>
               )}
             </div>
+            {selectedTab.parked ? (
+              <button className="btn btn--sm" style={{ background: 'var(--amber, #d97706)', color: '#fff', border: 'none' }} onClick={handleUnparkTab} title="Tab fortsetzen">
+                ▶ Fortsetzen
+              </button>
+            ) : (
+              <button className="btn btn--ghost btn--sm" onClick={handleParkTab} title="Tab parken — Kunde kommt später zahlen" style={{ color: 'var(--amber, #d97706)' }}>
+                ⏸ Parken
+              </button>
+            )}
             <button className="btn btn--primary btn--sm" onClick={() => { setView('products'); setProductSearch(''); }}>
               + Add items
             </button>

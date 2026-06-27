@@ -48,6 +48,17 @@ router.post('/:id/close', (req: Request, res: Response) => {
   if (!session) return void res.status(404).json({ error: 'session not found' });
   if (session.status === 'closed') return void res.status(409).json({ error: 'session already closed' });
 
+  const unparked = db.prepare(
+    "SELECT id, customer_name FROM tabs WHERE session_id = ? AND status = 'open' AND parked = 0"
+  ).all(id) as Array<{ id: number; customer_name: string }>;
+  if (unparked.length > 0) {
+    return void res.status(409).json({
+      error: 'open_tabs',
+      message: 'Alle offenen Tabs müssen zuerst geparkt werden.',
+      tabs: unparked,
+    });
+  }
+
   const now = new Date().toISOString();
   db.prepare("UPDATE sessions SET status = 'closed', closed_at = ? WHERE id = ?").run(now, id);
   const updated = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
