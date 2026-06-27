@@ -13,20 +13,24 @@ function getPrinterIp(): string | null {
   return row?.value?.trim() || null;
 }
 
-// Build a map from category name → top-level (parent_id = NULL) category id
-function buildCategoryParentMap(): Map<string, number> {
+// Map each category name to its ancestor chain, most specific first:
+// [ownId, parentId, …, rootId]. Routing walks this chain and picks the most
+// specific order printer that claims any id in it, so assigning a subcategory
+// to a printer overrides whatever its parent is assigned to.
+function buildCategoryChainMap(): Map<string, number[]> {
   const rows = db.prepare('SELECT id, name, parent_id FROM categories').all() as { id: number; name: string; parent_id: number | null }[];
   const byId = new Map(rows.map(r => [r.id, r]));
-  const map = new Map<string, number>();
+  const map = new Map<string, number[]>();
   for (const row of rows) {
-    // Walk up to find the root
-    let cur = row;
-    while (cur.parent_id !== null) {
-      const parent = byId.get(cur.parent_id);
-      if (!parent) break;
-      cur = parent;
+    const chain: number[] = [];
+    const seen = new Set<number>();
+    let cur: typeof row | undefined = row;
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      chain.push(cur.id);
+      cur = cur.parent_id !== null ? byId.get(cur.parent_id) : undefined;
     }
-    map.set(row.name, cur.id);
+    map.set(row.name, chain);
   }
   return map;
 }
@@ -108,17 +112,24 @@ router.post('/order', async (req: Request, res: Response) => {
     }
   }
 
-  // Build category → top-level id map for routing
-  const catParentMap = buildCategoryParentMap();
+  // Build category name → ancestor chain map for routing
+  const catChainMap = buildCategoryChainMap();
 
-  // Group items by which order printer handles them (first match wins);
-  // items with no match go to the fallback (receipt printer) bucket.
+  // Group items by which order printer handles them. For each item we walk its
+  // category chain from most specific (own category) to least specific (root)
+  // and pick the first printer that claims a category in the chain — so a
+  // subcategory assignment overrides its parent. Items with no match go to the
+  // fallback (receipt printer) bucket.
   const buckets = new Map<string, typeof lines>(); // key = printer id | '__fallback__'
   for (const line of lines) {
-    const topLevelId = line.category_name ? catParentMap.get(line.category_name) : undefined;
-    const matched = topLevelId !== undefined
-      ? orderPrinters.find(p => p.category_ids.includes(topLevelId))
-      : undefined;
+    const chain = line.category_name ? catChainMap.get(line.category_name) : undefined;
+    let matched: typeof orderPrinters[number] | undefined;
+    if (chain) {
+      for (const catId of chain) {
+        matched = orderPrinters.find(p => p.category_ids.includes(catId));
+        if (matched) break;
+      }
+    }
     const key = matched ? matched.id : '__fallback__';
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(line);

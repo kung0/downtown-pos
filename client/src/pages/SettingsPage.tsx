@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { Settings, OrderPrinter, Category } from '@downtown/shared';
 import { settingsApi, printerApi, categoriesApi } from '../api';
 import { formatMoney } from '../utils/money';
+import { buildTree, flattenTree } from '../utils/categoryTree';
 
 function parseRate(s: string): number | null {
   const v = parseFloat(s.trim().replace(',', '.'));
@@ -32,6 +33,137 @@ function RateField({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
+// Type-to-filter category picker for order printers. Suggests every category
+// (parent and child) with its full path, lets you pick several, and shows the
+// selection as removable chips. Assigning a subcategory here overrides its
+// parent's routing (handled server-side).
+function CategoryPicker({
+  categories,
+  selectedIds,
+  onChange,
+}: {
+  categories: Category[];
+  selectedIds: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const byId = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories]);
+
+  // Full path label, e.g. "Food › Phở", so children are unambiguous.
+  const pathLabel = useMemo(() => {
+    return (id: number): string => {
+      const parts: string[] = [];
+      let cur: Category | undefined = byId.get(id);
+      const seen = new Set<number>();
+      while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        parts.unshift(cur.name);
+        cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined;
+      }
+      return parts.join(' › ');
+    };
+  }, [byId]);
+
+  // Categories in tree (DFS) order for stable suggestion ordering.
+  const ordered = useMemo(
+    () => flattenTree(buildTree(categories)).map(f => f.cat),
+    [categories]
+  );
+
+  const selectedSet = new Set(selectedIds);
+  const q = query.trim().toLowerCase();
+  const suggestions = ordered
+    .filter(cat => !selectedSet.has(cat.id))
+    .filter(cat => q === '' || pathLabel(cat.id).toLowerCase().includes(q))
+    .slice(0, 8);
+
+  function add(id: number) {
+    onChange([...selectedIds, id]);
+    setQuery('');
+    setOpen(true);
+  }
+  function remove(id: number) {
+    onChange(selectedIds.filter(x => x !== id));
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {selectedIds.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {selectedIds.map(id => (
+            <span
+              key={id}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontSize: 13, padding: '3px 6px 3px 10px', borderRadius: 999,
+                background: 'var(--surface-2, rgba(127,127,127,0.12))',
+                border: '1.5px solid var(--border)', color: 'var(--text)',
+              }}
+            >
+              {byId.has(id) ? pathLabel(id) : `#${id}`}
+              <button
+                type="button"
+                onClick={() => remove(id)}
+                aria-label="Remove"
+                style={{
+                  border: 'none', background: 'transparent', cursor: 'pointer',
+                  color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: '0 2px',
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ position: 'relative', maxWidth: 320 }}>
+        <input
+          type="text"
+          className="price-input__field"
+          placeholder={selectedIds.length ? 'Add another category…' : 'Type to add categories…'}
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => { blurTimer.current = setTimeout(() => setOpen(false), 120); }}
+          style={{ padding: '6px 10px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', width: '100%', fontSize: 14, background: 'var(--surface)', color: 'var(--text)' }}
+        />
+        {open && suggestions.length > 0 && (
+          <div
+            onMouseDown={() => { if (blurTimer.current) clearTimeout(blurTimer.current); }}
+            style={{
+              position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 10,
+              background: 'var(--surface)', border: '1.5px solid var(--border)',
+              borderRadius: 'var(--radius)', boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
+              maxHeight: 240, overflowY: 'auto',
+            }}
+          >
+            {suggestions.map(cat => (
+              <button
+                type="button"
+                key={cat.id}
+                onClick={() => add(cat.id)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', border: 'none',
+                  background: 'transparent', cursor: 'pointer', padding: '7px 10px',
+                  fontSize: 13, color: 'var(--text)',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2, rgba(127,127,127,0.12))')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              >
+                {pathLabel(cat.id)}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [settings, setSettings]     = useState<Settings | null>(null);
   const [standard, setStandard]     = useState('');
@@ -52,7 +184,7 @@ export default function SettingsPage() {
 
   // order printers state
   const [orderPrinters,        setOrderPrinters]        = useState<OrderPrinter[]>([]);
-  const [parentCategories,     setParentCategories]     = useState<Category[]>([]);
+  const [categories,           setCategories]           = useState<Category[]>([]);
   const [savingOrderPrinters,  setSavingOrderPrinters]  = useState(false);
   const [savedOrderPrinters,   setSavedOrderPrinters]   = useState(false);
 
@@ -89,7 +221,7 @@ export default function SettingsPage() {
     }).catch(console.error);
 
     printerApi.status().then(setPrinterStatus).catch(console.error);
-    categoriesApi.list().then(cats => setParentCategories(cats.filter(c => c.parent_id === null))).catch(console.error);
+    categoriesApi.list().then(setCategories).catch(console.error);
   }, []);
 
   const standardCents = parseRate(standard);
@@ -385,28 +517,14 @@ export default function SettingsPage() {
                       Remove
                     </button>
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
-                    {parentCategories.map(cat => (
-                      <label key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={op.category_ids.includes(cat.id)}
-                          onChange={e => setOrderPrinters(prev => prev.map((p, i) => {
-                            if (i !== idx) return p;
-                            const ids = e.target.checked
-                              ? [...p.category_ids, cat.id]
-                              : p.category_ids.filter(id => id !== cat.id);
-                            return { ...p, category_ids: ids };
-                          }))}
-                          style={{ width: 14, height: 14, cursor: 'pointer' }}
-                        />
-                        {cat.name}
-                      </label>
-                    ))}
-                  </div>
-                  {parentCategories.length > 0 && (
+                  <CategoryPicker
+                    categories={categories}
+                    selectedIds={op.category_ids}
+                    onChange={ids => setOrderPrinters(prev => prev.map((p, i) => i === idx ? { ...p, category_ids: ids } : p))}
+                  />
+                  {categories.length > 0 && (
                     <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
-                      Checked categories and all their subcategories will print here.
+                      Items print to the most specific matching printer — assigning a subcategory overrides its parent. Subcategories with no own assignment follow their parent.
                     </p>
                   )}
                 </div>
