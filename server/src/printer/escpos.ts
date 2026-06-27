@@ -21,14 +21,30 @@ const DBL_HEIGHT_OFF = b(ESC, 0x21, 0x00);
 // Feed 4 lines then partial cut
 const FEED_CUT = b(ESC, 0x64, 4, GS, 0x56, 0x42, 0x00);
 
-// Encode string to CP1252 bytes; characters outside U+00FF become '?'
+// Encode string to CP1252 bytes. German chars (ä ö ü ß é â …) live in CP1252
+// and pass through untouched. The printer has no Vietnamese codepage, so for
+// anything CP1252 can't show — Vietnamese tone marks like ở ầ ế ư — we strip
+// the diacritics down to the base letter (phở → pho, bánh mì → banh mi).
+// Truly unrepresentable characters become '?'.
 function enc(s: string): Buffer {
-  const out = Buffer.alloc(s.length);
-  for (let i = 0; i < s.length; i++) {
-    const cp = s.charCodeAt(i);
-    out[i] = cp < 256 ? cp : 0x3F;
+  const out: number[] = [];
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 256) {
+      out.push(cp);
+      continue;
+    }
+    // đ/Đ have no canonical decomposition — map them by hand.
+    const base =
+      ch === 'đ' ? 'd' :
+      ch === 'Đ' ? 'D' :
+      ch.normalize('NFD').replace(/[̀-ͯ]/g, ''); // combining diacritical marks
+    for (const c of base) {
+      const b = c.codePointAt(0)!;
+      out.push(b < 256 ? b : 0x3F);
+    }
   }
-  return out;
+  return Buffer.from(out);
 }
 
 function line(s: string): Buffer {
