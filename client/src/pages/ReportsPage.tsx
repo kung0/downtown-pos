@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Session, ShiftSummary } from '@downtown/shared';
 import { sessionsApi, exportApi } from '../api';
+import { useSession } from '../context/SessionContext';
 import { formatMoney } from '../utils/money';
 import { formatDateTime, formatTime } from '../utils/time';
 
@@ -15,6 +16,7 @@ function sessionLabel(s: Session, index: number, total: number): string {
 }
 
 export default function ReportsPage() {
+  const { session } = useSession();
   const [sessions, setSessions]   = useState<Session[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [summary, setSummary]     = useState<ShiftSummary | null>(null);
@@ -38,15 +40,19 @@ export default function ReportsPage() {
   const [exportErr, setExportErr] = useState('');
 
   useEffect(() => {
+    setLoading(true);
     sessionsApi.list()
       .then(list => {
         setSessions(list);
-        const first = list[0] ?? null;
-        if (first) setSelectedId(first.id);
+        setSelectedId(prev => {
+          // keep current selection if it still exists in the refreshed list
+          if (prev !== null && list.some(s => s.id === prev)) return prev;
+          return list[0]?.id ?? null;
+        });
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [session?.id, session?.status]);
 
   useEffect(() => {
     if (!selectedId) { setSummary(null); return; }
