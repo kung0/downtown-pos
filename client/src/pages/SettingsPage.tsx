@@ -3,6 +3,7 @@ import type { Settings, OrderPrinter, Category } from '@downtown/shared';
 import { settingsApi, printerApi, categoriesApi } from '../api';
 import { formatMoney } from '../utils/money';
 import { buildTree, flattenTree } from '../utils/categoryTree';
+import { foldDiacritics } from '../utils/text';
 
 function parseRate(s: string): number | null {
   const v = parseFloat(s.trim().replace(',', '.'));
@@ -74,10 +75,10 @@ function CategoryPicker({
   );
 
   const selectedSet = new Set(selectedIds);
-  const q = query.trim().toLowerCase();
+  const q = foldDiacritics(query.trim());
   const suggestions = ordered
     .filter(cat => !selectedSet.has(cat.id))
-    .filter(cat => q === '' || pathLabel(cat.id).toLowerCase().includes(q))
+    .filter(cat => q === '' || foldDiacritics(pathLabel(cat.id)).includes(q))
     .slice(0, 8);
 
   function add(id: number) {

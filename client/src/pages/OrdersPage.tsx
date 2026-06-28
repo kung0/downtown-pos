@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Tab, Product, ProductVariant, Category, WSMessage } from '@downtown/shared';
 import { tabsApi, productsApi, categoriesApi, printerApi } from '../api';
 import { subscribe } from '../lib/liveUpdates';
+import { foldDiacritics } from '../utils/text';
 
 interface CategoryGroup { parent: Category; children: Category[]; }
 
@@ -623,9 +624,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   function renderProductGrid() {
-    const query = productSearch.trim().toLowerCase();
+    const query = foldDiacritics(productSearch.trim());
     const visibleProducts = query
-      ? products.filter(p => p.available && p.name.toLowerCase().includes(query))
+      ? products.filter(p => p.available && foldDiacritics(p.name).includes(query))
       : null;
 
     function renderCard(p: Product) {
@@ -720,7 +721,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   const filteredTabs = tabSearch.trim()
-    ? tabs.filter(t => t.customer_name.toLowerCase().includes(tabSearch.toLowerCase()))
+    ? tabs.filter(t => foldDiacritics(t.customer_name).includes(foldDiacritics(tabSearch)))
     : tabs;
 
   const mobileHideTabs = selectedTab !== null;
@@ -1760,7 +1761,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             </div>
             <div style={{ paddingBottom: 4 }}>
               {tabs
-                .filter(t => t.customer_name.toLowerCase().includes(pickTabSearch.toLowerCase()))
+                .filter(t => foldDiacritics(t.customer_name).includes(foldDiacritics(pickTabSearch)))
                 .map(t => (
                   <button key={t.id} className="tab-pick-btn" onClick={() => handleAddCartToTab(t.id)}>
                     <span className="tab-pick-btn__name">{t.customer_name}</span>

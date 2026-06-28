@@ -4,6 +4,7 @@ import { tabsApi, printerApi } from '../api';
 import { subscribe } from '../lib/liveUpdates';
 import { formatDateTime, formatTime } from '../utils/time';
 import { formatMoney } from '../utils/money';
+import { foldDiacritics } from '../utils/text';
 import { useSession } from '../context/SessionContext';
 
 const TRACKED_TAB_EVENTS = new Set<WSMessage['type']>(['tab:opened', 'tab:updated', 'tab:closed', 'tab:voided', 'tab:deleted', 'tab:parked', 'tab:unparked']);
@@ -46,7 +47,7 @@ export default function HistoryPage() {
   }, [sessionId]);
 
   const filtered = tabs.filter(t =>
-    t.customer_name.toLowerCase().includes(search.toLowerCase())
+    foldDiacritics(t.customer_name).includes(foldDiacritics(search))
   );
 
   return (
