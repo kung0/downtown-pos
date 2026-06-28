@@ -351,6 +351,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setCart([]);
       setItemQtyOverrides({});
       setHighlightedKey(null);
+      setPrintOrders(true);
       setView('detail');
       setProductSearch('');
     } catch (e) {
@@ -379,6 +380,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       const closed = await tabsApi.quickPay(items, directPayMethod, tipCents, discountCents);
       firePrintOrder(closed.customer_name, orderLines);
       setCart([]);
+      setPrintOrders(true);
       setShowDirectPay(false);
       setReceipt(closed);
     } catch (e) {
@@ -412,6 +414,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setView('detail');
       setCart([]);
       setHighlightedKey(null);
+      setPrintOrders(true);
       setShowNewTab(false);
       setNewTabName('');
       setNewTabNotes('');
@@ -439,6 +442,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setView('detail');
       setCart([]);
       setHighlightedKey(null);
+      setPrintOrders(true);
     } catch (e) {
       alert((e as Error).message);
     }
