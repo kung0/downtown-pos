@@ -261,6 +261,29 @@ router.patch('/:id/notes', (req: Request, res: Response) => {
   res.json(tab);
 });
 
+// PATCH /api/tabs/:id/name — rename an open tab
+router.patch('/:id/name', (req: Request, res: Response) => {
+  const tabId = Number(req.params.id);
+  const { customer_name } = req.body;
+  if (!customer_name?.trim()) return void res.status(400).json({ error: 'customer_name is required' });
+  const name = customer_name.trim();
+
+  const tabRow = db.prepare("SELECT id FROM tabs WHERE id = ? AND status = 'open'").get(tabId);
+  if (!tabRow) return void res.status(404).json({ error: 'tab not found or not open' });
+
+  const existing = db.prepare(
+    "SELECT id FROM tabs WHERE customer_name = ? AND status = 'open' AND id != ? LIMIT 1"
+  ).get(name, tabId);
+  if (existing) return void res.status(409).json({ error: `a tab named "${name}" is already open` });
+
+  db.prepare('UPDATE tabs SET customer_name = ? WHERE id = ?').run(name, tabId);
+  logEvent('tab_updated', tabId, { customer_name: name });
+
+  const tab = buildTab(tabId)!;
+  broadcast({ type: 'tab:updated', data: tab });
+  res.json(tab);
+});
+
 // POST /api/tabs/:id/items — add or increment item
 router.post('/:id/items', (req: Request, res: Response) => {
   const tabId = Number(req.params.id);

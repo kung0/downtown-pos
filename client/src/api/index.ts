@@ -92,6 +92,8 @@ export const tabsApi = {
     req<Tab>('/tabs', { method: 'POST', body: JSON.stringify({ customer_name, notes }) }),
   updateNotes: (tabId: number, notes: string) =>
     req<Tab>(`/tabs/${tabId}/notes`, { method: 'PATCH', body: JSON.stringify({ notes }) }),
+  updateName: (tabId: number, customer_name: string) =>
+    req<Tab>(`/tabs/${tabId}/name`, { method: 'PATCH', body: JSON.stringify({ customer_name }) }),
   addItem: (tabId: number, product_id: number, quantity = 1, note?: string, variant_id?: number, custom_price_cents?: number) =>
     req<Tab>(`/tabs/${tabId}/items`, { method: 'POST', body: JSON.stringify({ product_id, quantity, note, variant_id, custom_price_cents }) }),
   removeItem: (tabId: number, itemId: number) =>

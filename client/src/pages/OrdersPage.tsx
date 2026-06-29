@@ -28,6 +28,18 @@ function fmtDuration(startIso: string, endIso: string): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
+// Lowest billiard table number among a tab's running sessions (null if none).
+// Table labels are "Table 1" … "Table 5"; used to flag + sort billiard tabs.
+function billiardTableNumber(tab: Tab): number | null {
+  const nums = (tab.active_sessions ?? [])
+    .filter(s => s.table_type === 'billiard')
+    .map(s => {
+      const m = (s.table_label ?? '').match(/\d+/);
+      return m ? Number(m[0]) : Infinity;
+    });
+  return nums.length === 0 ? null : Math.min(...nums);
+}
+
 
 interface CartItem {
   product: Product;
@@ -56,6 +68,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [creating, setCreating]   = useState(false);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput]   = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput]     = useState('');
   const [tabSearch, setTabSearch] = useState('');
   const [pickTabSearch, setPickTabSearch] = useState('');
   const [productSearch, setProductSearch] = useState('');
@@ -289,6 +303,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   useEffect(() => {
     setEditingNotes(false);
+    setEditingName(false);
     setCart([]);
     setItemQtyOverrides({});
     setHighlightedKey(null);
@@ -459,6 +474,21 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     if (!selectedId) return;
     setEditingNotes(false);
     try { updateTab(await tabsApi.updateNotes(selectedId, notesInput)); }
+    catch (e) { alert((e as Error).message); }
+  }
+
+  // ── tab name (rename) ────────────────────────────────────────
+  function openNameEdit() {
+    setNameInput(selectedTab?.customer_name ?? '');
+    setEditingName(true);
+  }
+
+  async function handleSaveName() {
+    if (!selectedId) return;
+    const name = nameInput.trim();
+    if (!name || name === selectedTab?.customer_name) { setEditingName(false); return; }
+    setEditingName(false);
+    try { updateTab(await tabsApi.updateName(selectedId, name)); }
     catch (e) { alert((e as Error).message); }
   }
 
@@ -724,6 +754,17 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     ? tabs.filter(t => foldDiacritics(t.customer_name).includes(foldDiacritics(tabSearch)))
     : tabs;
 
+  // Billiard tabs sit on top, ordered by table number (1,2,3,4,5); the rest keep
+  // their opened_at order below (Array.sort is stable, so returning 0 preserves it).
+  const sortedTabs = [...filteredTabs].sort((a, b) => {
+    const an = billiardTableNumber(a);
+    const bn = billiardTableNumber(b);
+    if (an !== null && bn !== null) return an - bn;
+    if (an !== null) return -1;
+    if (bn !== null) return 1;
+    return 0;
+  });
+
   const mobileHideTabs = selectedTab !== null;
 
   return (
@@ -755,22 +796,28 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             <p style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '28px 0' }}>
               No match
             </p>
-          ) : filteredTabs.map(t => (
+          ) : sortedTabs.map(t => {
+            const tableNo = billiardTableNumber(t);
+            return (
             <button
               key={t.id}
-              className={`tab-card${t.id === selectedId ? ' tab-card--active' : ''}${t.parked ? ' tab-card--parked' : ''}`}
+              className={`tab-card${t.id === selectedId ? ' tab-card--active' : ''}${t.parked ? ' tab-card--parked' : ''}${tableNo !== null ? ' tab-card--billiard' : ''}`}
               onClick={() => { setSelectedId(t.id === selectedId ? null : t.id); setView('detail'); }}
             >
               <div className="tab-card__name">
+                {tableNo !== null && (
+                  <span style={{ color: '#16a34a', fontWeight: 700, marginRight: 6 }}>🎱 {tableNo}</span>
+                )}
                 {t.customer_name}
-                {t.parked && <span className="badge badge--amber" style={{ marginLeft: 6, fontSize: 10 }}>Geparkt</span>}
+                {t.parked ? <span className="badge badge--amber" style={{ marginLeft: 6, fontSize: 10 }}>Geparkt</span> : null}
               </div>
               <div className="tab-card__meta">
                 <span>{elapsed(t.opened_at)}</span>
                 <span>{formatMoney(t.running_total_cents ?? 0)}</span>
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -845,7 +892,25 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           <div className="detail-header">
             <button className="btn btn--ghost btn--sm mobile-back" onClick={() => setSelectedId(null)}>←</button>
             <div className="detail-header__info">
-              <div className="detail-header__name">{selectedTab.customer_name}</div>
+              {editingName ? (
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <input
+                    className="field__input"
+                    style={{ fontSize: 15, fontWeight: 600, padding: '2px 6px', flex: 1 }}
+                    value={nameInput}
+                    onChange={e => setNameInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setEditingName(false); }}
+                    autoFocus
+                  />
+                  <button className="btn btn--primary btn--sm" onMouseDown={e => e.preventDefault()} onClick={handleSaveName}>Save</button>
+                  <button className="btn btn--ghost btn--sm" onClick={() => setEditingName(false)}>✕</button>
+                </div>
+              ) : (
+                <div className="detail-header__name detail-header__name--editable" onClick={openNameEdit} title="Rename tab">
+                  <span className="detail-header__name-text">{selectedTab.customer_name}</span>
+                  <span className="detail-header__name-edit" aria-hidden>✏️</span>
+                </div>
+              )}
               <div className="detail-header__meta">opened {elapsed(selectedTab.opened_at)}</div>
               {editingNotes ? (
                 <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
