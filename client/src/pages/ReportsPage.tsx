@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react';
-import type { Session, ShiftSummary } from '@downtown/shared';
+import { useState, useEffect, useCallback } from 'react';
+import type { Session, ShiftSummary, Tab, WSMessage } from '@downtown/shared';
 import { sessionsApi, exportApi } from '../api';
 import { useSession } from '../context/SessionContext';
-import { formatMoney } from '../utils/money';
-import { formatDateTime, formatTime } from '../utils/time';
+import { subscribe, subscribeResync } from '../lib/liveUpdates';
+import { formatTime } from '../utils/time';
+import SummaryBody from '../components/ShiftSummaryView';
+
+// Tab events that change a shift's numbers and so require the summary to refetch.
+const TRACKED_TAB_EVENTS = new Set<WSMessage['type']>(['tab:closed', 'tab:voided', 'tab:updated', 'tab:deleted']);
 
 function sessionLabel(s: Session, index: number, total: number): string {
   const num = total - index;
@@ -54,14 +58,27 @@ export default function ReportsPage() {
       .finally(() => setLoading(false));
   }, [session?.id, session?.status]);
 
-  useEffect(() => {
-    if (!selectedId) { setSummary(null); return; }
-    setSumLoading(true);
-    sessionsApi.summary(selectedId)
+  const loadSummary = useCallback((id: number | null, showSpinner = false) => {
+    if (!id) { setSummary(null); return; }
+    if (showSpinner) setSumLoading(true);
+    sessionsApi.summary(id)
       .then(setSummary)
       .catch(console.error)
       .finally(() => setSumLoading(false));
-  }, [selectedId]);
+  }, []);
+
+  useEffect(() => { loadSummary(selectedId, true); }, [selectedId, loadSummary]);
+
+  // Keep the summary live: refetch when a tab in the selected shift changes,
+  // and after a socket reconnect (which may have missed events while offline).
+  useEffect(() => subscribeResync(() => loadSummary(selectedId)), [selectedId, loadSummary]);
+
+  useEffect(() => {
+    return subscribe((msg: WSMessage) => {
+      if (!selectedId || !TRACKED_TAB_EVENTS.has(msg.type)) return;
+      if ((msg.data as Tab)?.session_id === selectedId) loadSummary(selectedId);
+    });
+  }, [selectedId, loadSummary]);
 
   if (loading) return <div className="page"><div className="placeholder">Loading…</div></div>;
 
@@ -150,119 +167,7 @@ export default function ReportsPage() {
       ) : !summary || summary.tab_count === 0 ? (
         <div className="placeholder">No closed tabs this shift</div>
       ) : (
-        <div className="reports-body">
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-            {formatDateTime(summary.session.opened_at)}
-            {' → '}
-            {summary.session.closed_at ? formatDateTime(summary.session.closed_at) : 'open'}
-          </div>
-
-          <div className="stat-grid">
-            <div className="stat-card">
-              <div className="stat-card__label">Total revenue</div>
-              <div className="stat-card__value">{formatMoney(summary.total_cents)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Tabs closed</div>
-              <div className="stat-card__value">{summary.tab_count}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Avg tab</div>
-              <div className="stat-card__value">
-                {formatMoney(summary.tab_count > 0 ? Math.round(summary.subtotal_cents / summary.tab_count) : 0)}
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Tips</div>
-              <div className="stat-card__value">{formatMoney(summary.tip_cents)}</div>
-            </div>
-          </div>
-
-          <div className="reports-section">
-            <h2 className="reports-section__title">Payment split</h2>
-            <div className="table-container">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Method</th>
-                    <th style={{ textAlign: 'right' }}>Tabs</th>
-                    <th style={{ textAlign: 'right' }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>Cash</td>
-                    <td style={{ textAlign: 'right' }}>{summary.cash_count}</td>
-                    <td style={{ textAlign: 'right' }}>{formatMoney(summary.cash_cents)}</td>
-                  </tr>
-                  <tr>
-                    <td>Card</td>
-                    <td style={{ textAlign: 'right' }}>{summary.card_count}</td>
-                    <td style={{ textAlign: 'right' }}>{formatMoney(summary.card_cents)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="reports-section">
-            <h2 className="reports-section__title">By category</h2>
-            <div className="table-container">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Category</th>
-                    <th style={{ textAlign: 'right' }}>Revenue</th>
-                    <th style={{ textAlign: 'right' }}>Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.by_category.map(row => (
-                    <tr key={row.category}>
-                      <td>{row.category}</td>
-                      <td style={{ textAlign: 'right' }}>{formatMoney(row.total_cents)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                        {summary.subtotal_cents > 0
-                          ? `${Math.round(row.total_cents / summary.subtotal_cents * 100)} %`
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="reports-section">
-            <h2 className="reports-section__title">Tax summary</h2>
-            <div className="table-container">
-              <table className="table">
-                <tbody>
-                  <tr>
-                    <td>Subtotal (gross)</td>
-                    <td style={{ textAlign: 'right' }}>{formatMoney(summary.subtotal_cents)}</td>
-                  </tr>
-                  {summary.tax_standard_cents > 0 && (
-                    <tr>
-                      <td style={{ color: 'var(--text-muted)' }}>inkl. MwSt. 19 % (Getränke)</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                        {formatMoney(summary.tax_standard_cents)}
-                      </td>
-                    </tr>
-                  )}
-                  {summary.tax_reduced_cents > 0 && (
-                    <tr>
-                      <td style={{ color: 'var(--text-muted)' }}>inkl. MwSt. 7 % (Speisen)</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                        {formatMoney(summary.tax_reduced_cents)}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <SummaryBody summary={summary} />
       )}
     </div>
   );

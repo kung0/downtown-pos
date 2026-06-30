@@ -200,7 +200,7 @@ export function summarizeClosedTabs(closed: any[]) {
       AND li.tax_category_snapshot = 'standard'
     GROUP BY li.name_snapshot
     ORDER BY qty DESC
-    LIMIT 3
+    LIMIT 10
   `).all(...ids) as Array<{ name: string; qty: number }>;
 
   const top_food = ids.length === 0 ? [] : db.prepare(`
@@ -211,7 +211,7 @@ export function summarizeClosedTabs(closed: any[]) {
       AND li.tax_category_snapshot = 'reduced'
     GROUP BY li.name_snapshot
     ORDER BY qty DESC
-    LIMIT 3
+    LIMIT 10
   `).all(...ids) as Array<{ name: string; qty: number }>;
 
   const total_cents = sum('total_cents');
