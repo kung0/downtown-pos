@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Tab, TabEvent, WSMessage } from '@downtown/shared';
 import { tabsApi, printerApi } from '../api';
-import { subscribe } from '../lib/liveUpdates';
+import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { formatDateTime, formatTime } from '../utils/time';
 import { formatMoney } from '../utils/money';
 import { foldDiacritics } from '../utils/text';
@@ -30,6 +30,8 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => { load(sessionId); }, [sessionId, load]);
+
+  useEffect(() => subscribeResync(() => load(sessionId)), [sessionId, load]);
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {

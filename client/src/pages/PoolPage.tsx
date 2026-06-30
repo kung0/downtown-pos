@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PoolTable, Tab, WaitlistEntry, WSMessage, TableType, BilliardHistoryItem } from '@downtown/shared';
 import { poolApi, tabsApi, waitlistApi } from '../api';
-import { subscribe } from '../lib/liveUpdates';
+import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { formatMoney } from '../utils/money';
 import { formatTime } from '../utils/time';
 
@@ -105,6 +105,8 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
   }, []);
 
   useEffect(() => { loadTables(); loadWaitlist(); }, [loadTables, loadWaitlist]);
+
+  useEffect(() => subscribeResync(() => { loadTables(); loadWaitlist(); }), [loadTables, loadWaitlist]);
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {

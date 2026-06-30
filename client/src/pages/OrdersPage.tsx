@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Tab, Product, ProductVariant, Category, WSMessage } from '@downtown/shared';
 import { tabsApi, productsApi, categoriesApi, printerApi } from '../api';
-import { subscribe } from '../lib/liveUpdates';
+import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { foldDiacritics } from '../utils/text';
 
 interface CategoryGroup { parent: Category; children: Category[]; }
@@ -258,17 +258,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   // ── data loading ──────────────────────────────────────────────
-  const loadTabs = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     try { setTabs(await tabsApi.list()); } catch (e) { console.error(e); }
+    productsApi.list().then(setProducts).catch(console.error);
+    categoriesApi.list().then(setCategories).catch(console.error);
   }, []);
 
   useEffect(() => {
-    loadTabs();
-    productsApi.list().then(setProducts).catch(console.error);
-    categoriesApi.list().then(setCategories).catch(console.error);
+    loadAll();
     const tick = setInterval(() => setTick(n => n + 1), 30_000);
     return () => clearInterval(tick);
-  }, [loadTabs]);
+  }, [loadAll]);
+
+  useEffect(() => subscribeResync(loadAll), [loadAll]);
 
   useEffect(() => {
     return subscribe((msg: WSMessage) => {
