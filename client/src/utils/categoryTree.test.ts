@@ -3,7 +3,7 @@ import { buildTree, flattenTree, applyCategoryReorder, detectCycle } from './cat
 import type { Category } from '@downtown/shared';
 
 function cat(id: number, name: string, parent_id: number | null, sort_order = 0): Category {
-  return { id, name, parent_id, sort_order, tax_category: 'standard', created_at: '' };
+  return { id, name, parent_id, sort_order, tax_category: 'standard', created_at: '', avail_days: null, avail_start: null, avail_end: null };
 }
 
 describe('buildTree + flattenTree', () => {

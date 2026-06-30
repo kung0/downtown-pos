@@ -3,6 +3,7 @@ import type { Tab, Product, ProductVariant, Category, WSMessage } from '@downtow
 import { tabsApi, productsApi, categoriesApi, printerApi } from '../api';
 import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { foldDiacritics } from '../utils/text';
+import { isCategoryAvailableNow } from '../utils/availability';
 
 interface CategoryGroup { parent: Category; children: Category[]; }
 
@@ -664,9 +665,17 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   function renderProductGrid() {
+    // Categories outside their time-of-day window are hidden right now. Recomputed
+    // each render; the 30s tick keeps it fresh as windows open/close.
+    const catById = new Map(categories.map(c => [c.id, c]));
+    const availableCatNames = new Set(
+      categories.filter(c => isCategoryAvailableNow(c.id, catById)).map(c => c.name)
+    );
+    const categoryAvailable = (name: string) => availableCatNames.has(name);
+
     const query = foldDiacritics(productSearch.trim());
     const visibleProducts = query
-      ? products.filter(p => p.available && foldDiacritics(p.name).includes(query))
+      ? products.filter(p => p.available && categoryAvailable(p.category) && foldDiacritics(p.name).includes(query))
       : null;
 
     function renderCard(p: Product) {
@@ -737,6 +746,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         ) : (
           buildCatTree(categories).map(({ parent, children }) => {
             const childSections = children
+              .filter(child => categoryAvailable(child.name))
               .map(child => ({
                 child,
                 catProducts: products.filter(p => p.category === child.name && p.available),

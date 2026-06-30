@@ -139,6 +139,9 @@ export function initSchema(): void {
   try { db.exec('ALTER TABLE tabs ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE products ADD COLUMN is_misc INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE tabs ADD COLUMN parked INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec('ALTER TABLE categories ADD COLUMN avail_days TEXT'); } catch {}
+  try { db.exec('ALTER TABLE categories ADD COLUMN avail_start TEXT'); } catch {}
+  try { db.exec('ALTER TABLE categories ADD COLUMN avail_end TEXT'); } catch {}
 
   // Set correct tax_category based on product category (idempotent).
   // Food sections → 7% reduced; drink/café sections → 19% standard.

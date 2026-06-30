@@ -14,6 +14,38 @@ function normalize(row: unknown): Category {
   return row as Category;
 }
 
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// Parse the availability window out of a request body. Returns the three
+// columns to store, or an error string if anything is malformed.
+function parseAvailability(body: any):
+  | { avail_days: string | null; avail_start: string | null; avail_end: string | null }
+  | { error: string } {
+  let avail_days: string | null = null;
+  if (body.avail_days !== undefined && body.avail_days !== null && body.avail_days !== '') {
+    const raw = String(body.avail_days).split(',').map((s: string) => s.trim()).filter(Boolean);
+    const days = raw.map(Number);
+    if (days.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) {
+      return { error: 'avail_days must be weekday numbers 1–7' };
+    }
+    const uniq = [...new Set(days)].sort((a, b) => a - b);
+    // 7 days selected = no restriction; store null.
+    avail_days = uniq.length === 0 || uniq.length === 7 ? null : uniq.join(',');
+  }
+
+  const parseTime = (v: unknown): string | null | { error: string } => {
+    if (v === undefined || v === null || v === '') return null;
+    const s = String(v);
+    return TIME_RE.test(s) ? s : { error: 'time must be HH:MM (24h)' };
+  };
+  const start = parseTime(body.avail_start);
+  if (start && typeof start === 'object') return start;
+  const end = parseTime(body.avail_end);
+  if (end && typeof end === 'object') return end;
+
+  return { avail_days, avail_start: start as string | null, avail_end: end as string | null };
+}
+
 // GET /api/categories — flat list, parents first then children ordered by sort_order
 router.get('/', (_req: Request, res: Response) => {
   const rows = db.prepare(`
@@ -45,11 +77,14 @@ router.post('/', (req: Request, res: Response) => {
   const conflict = db.prepare('SELECT id FROM categories WHERE name = ?').get(name.trim());
   if (conflict) return void res.status(400).json({ error: 'a category with that name already exists' });
 
+  const avail = parseAvailability(req.body);
+  if ('error' in avail) return void res.status(400).json({ error: avail.error });
+
   const now = new Date().toISOString();
   const { lastInsertRowid } = db.prepare(`
-    INSERT INTO categories (name, parent_id, tax_category, sort_order, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(name.trim(), parent_id, tax_category, Number(sort_order), now);
+    INSERT INTO categories (name, parent_id, tax_category, sort_order, created_at, avail_days, avail_start, avail_end)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name.trim(), parent_id, tax_category, Number(sort_order), now, avail.avail_days, avail.avail_start, avail.avail_end);
 
   const row = normalize(db.prepare('SELECT * FROM categories WHERE id = ?').get(lastInsertRowid)!);
   res.status(201).json(row);
@@ -125,15 +160,25 @@ router.put('/:id', (req: Request, res: Response) => {
   const conflict = db.prepare('SELECT id FROM categories WHERE name = ? AND id != ?').get(name, id);
   if (conflict) return void res.status(400).json({ error: 'a category with that name already exists' });
 
+  // Availability is only touched when at least one of its fields is in the body,
+  // so callers that don't know about it leave the existing window untouched.
+  const existingRow = existing as unknown as Category;
+  let avail = { avail_days: existingRow.avail_days, avail_start: existingRow.avail_start, avail_end: existingRow.avail_end };
+  if ('avail_days' in req.body || 'avail_start' in req.body || 'avail_end' in req.body) {
+    const parsed = parseAvailability(req.body);
+    if ('error' in parsed) return void res.status(400).json({ error: parsed.error });
+    avail = parsed;
+  }
+
   const now = new Date().toISOString();
   const oldName = existing.name;
   const oldTax  = existing.tax_category;
 
   db.transaction(() => {
     db.prepare(`
-      UPDATE categories SET name = ?, parent_id = ?, tax_category = ?, sort_order = ?
+      UPDATE categories SET name = ?, parent_id = ?, tax_category = ?, sort_order = ?, avail_days = ?, avail_start = ?, avail_end = ?
       WHERE id = ?
-    `).run(name, parent_id, tax_category, Number(sort_order), id);
+    `).run(name, parent_id, tax_category, Number(sort_order), avail.avail_days, avail.avail_start, avail.avail_end, id);
 
     if (name !== oldName) {
       db.prepare('UPDATE products SET category = ?, updated_at = ? WHERE category = ?').run(name, now, oldName);

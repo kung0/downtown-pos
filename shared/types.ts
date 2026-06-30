@@ -7,6 +7,12 @@ export interface Category {
   tax_category: TaxCategory;
   sort_order: number;
   created_at: string;
+  // Time-of-day availability (Europe/Berlin). All null = always available.
+  // avail_days: comma-separated weekday numbers, 1=Mon … 7=Sun. null = every day.
+  // avail_start / avail_end: "HH:MM" 24h. Restriction cascades to subcategories.
+  avail_days: string | null;
+  avail_start: string | null;
+  avail_end: string | null;
 }
 export type TaxCategory = 'standard' | 'reduced';
 export type TabStatus = 'open' | 'closed' | 'voided' | 'deleted';

@@ -5,6 +5,7 @@ import type { CategoryInput } from '../api';
 import { formatMoney, parseMoney, parseMoneyAny, centsToInputValue } from '../utils/money';
 import { buildTree, flattenTree, findNode, collectDescendantIds } from '../utils/categoryTree';
 import type { TreeNode } from '../utils/categoryTree';
+import { WEEKDAYS, formatAvailability } from '../utils/availability';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent, DragMoveEvent } from '@dnd-kit/core';
 import { ReorderProductsView, ReorderCategoriesView } from './MenuPageReorder';
@@ -35,8 +36,28 @@ interface VariantDraft { name: string; price: string; }
 
 // ── category form ─────────────────────────────────────────────────────────────
 
-interface CatForm { name: string; parent_id: string; tax_category: 'standard' | 'reduced'; }
-const EMPTY_CAT_FORM: CatForm = { name: '', parent_id: '', tax_category: 'standard' };
+interface CatForm {
+  name: string;
+  parent_id: string;
+  tax_category: 'standard' | 'reduced';
+  timeRestricted: boolean;
+  days: number[];      // 1=Mon … 7=Sun; empty = every day
+  start: string;       // "HH:MM" or ''
+  end: string;         // "HH:MM" or ''
+}
+const EMPTY_CAT_FORM: CatForm = { name: '', parent_id: '', tax_category: 'standard', timeRestricted: false, days: [], start: '', end: '' };
+
+function catToForm(cat: Category): CatForm {
+  return {
+    name: cat.name,
+    parent_id: cat.parent_id === null ? '' : String(cat.parent_id),
+    tax_category: cat.tax_category,
+    timeRestricted: !!(cat.avail_days || cat.avail_start || cat.avail_end),
+    days: cat.avail_days ? cat.avail_days.split(',').map(Number) : [],
+    start: cat.avail_start ?? '',
+    end: cat.avail_end ?? '',
+  };
+}
 
 // ── component ─────────────────────────────────────────────────────────────────
 
@@ -377,11 +398,7 @@ export default function MenuPage() {
 
   function openEditCat(cat: Category) {
     setEditingCat(cat);
-    setCatForm({
-      name:         cat.name,
-      parent_id:    cat.parent_id === null ? '' : String(cat.parent_id),
-      tax_category: cat.tax_category,
-    });
+    setCatForm(catToForm(cat));
     setCatFormError(null);
     setShowCatModal(true);
   }
@@ -398,6 +415,9 @@ export default function MenuPage() {
         name: catForm.name.trim(),
         parent_id: parentId,
         tax_category: catForm.tax_category,
+        avail_days:  catForm.timeRestricted && catForm.days.length > 0 ? [...catForm.days].sort((a, b) => a - b).join(',') : null,
+        avail_start: catForm.timeRestricted && catForm.start ? catForm.start : null,
+        avail_end:   catForm.timeRestricted && catForm.end ? catForm.end : null,
       };
       if (editingCat) {
         const updated = await categoriesApi.update(editingCat.id, payload);
@@ -603,6 +623,11 @@ export default function MenuPage() {
               <div key={cat.id} className={`cat-row${depth === 0 ? ' cat-row--root' : ''}`}>
                 {depth > 0 && <div className="cat-row__spacer" style={{ width: depth * 20 }} />}
                 <span className="cat-row__name">{cat.name}</span>
+                {formatAvailability(cat) && (
+                  <span className="cat-tax-badge" style={{ background: 'rgba(217,119,6,0.12)', color: 'var(--amber, #d97706)' }}>
+                    🕐 {formatAvailability(cat)}
+                  </span>
+                )}
                 <span className={`cat-tax-badge cat-tax-badge--${cat.tax_category}`}>
                   {cat.tax_category === 'reduced' ? '7 %' : '19 %'}
                 </span>
@@ -819,6 +844,69 @@ export default function MenuPage() {
                   <option value="reduced">7 % (Ermäßigt)</option>
                 </select>
               </div>
+              <div className="field">
+                <label className="field__label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={catForm.timeRestricted}
+                    onChange={e => setCatForm(f => ({ ...f, timeRestricted: e.target.checked }))}
+                    style={{ width: 15, height: 15, cursor: 'pointer' }}
+                  />
+                  Nur zu bestimmten Zeiten verfügbar
+                </label>
+              </div>
+              {catForm.timeRestricted && (
+                <>
+                  <div className="field">
+                    <label className="field__label">Wochentage</label>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {WEEKDAYS.map(({ num, label }) => {
+                        const on = catForm.days.includes(num);
+                        return (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => setCatForm(f => ({
+                              ...f,
+                              days: on ? f.days.filter(d => d !== num) : [...f.days, num],
+                            }))}
+                            style={{
+                              flex: 1, minWidth: 38, padding: '6px 0', borderRadius: 6, cursor: 'pointer',
+                              border: '1px solid var(--border)', fontWeight: 600, fontSize: 13,
+                              background: on ? '#3b82f6' : 'transparent',
+                              color: on ? '#fff' : 'var(--text-muted)',
+                            }}
+                          >{label}</button>
+                        );
+                      })}
+                    </div>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                      Keine Auswahl = jeden Tag.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <div className="field" style={{ flex: 1 }}>
+                      <label className="field__label">Von</label>
+                      <input
+                        className="field__input" type="time"
+                        value={catForm.start}
+                        onChange={e => setCatForm(f => ({ ...f, start: e.target.value }))}
+                      />
+                    </div>
+                    <div className="field" style={{ flex: 1 }}>
+                      <label className="field__label">Bis</label>
+                      <input
+                        className="field__input" type="time"
+                        value={catForm.end}
+                        onChange={e => setCatForm(f => ({ ...f, end: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>
+                    Gilt auch für alle Unterkategorien.
+                  </p>
+                </>
+              )}
             </div>
             <div className="modal__footer">
               <button className="btn btn--ghost" onClick={() => setShowCatModal(false)}>Abbrechen</button>

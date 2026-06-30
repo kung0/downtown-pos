@@ -20,6 +20,9 @@ export interface CategoryInput {
   parent_id: number | null;
   tax_category?: 'standard' | 'reduced';
   sort_order?: number;
+  avail_days?: string | null;
+  avail_start?: string | null;
+  avail_end?: string | null;
 }
 
 export interface ProductReorderItem {
