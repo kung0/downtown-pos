@@ -74,7 +74,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [pickTabSearch, setPickTabSearch] = useState('');
   const [productSearch, setProductSearch] = useState('');
   const [showClose, setShowClose]       = useState(false);
-  const [payMethod, setPayMethod]       = useState<'cash' | 'card'>('cash');
+  const [payMethod, setPayMethod]       = useState<'cash' | 'card' | null>(null);
   const [totalInput, setTotalInput]     = useState('');
   const [discountInput, setDiscountInput] = useState('');
   const [discountType, setDiscountType] = useState<'flat' | 'pct'>('pct');
@@ -84,7 +84,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [printMsg, setPrintMsg]         = useState('');
   const [bewirtung, setBewirtung]       = useState(false);
   const [showDirectPay, setShowDirectPay] = useState(false);
-  const [directPayMethod, setDirectPayMethod] = useState<'cash' | 'card'>('cash');
+  const [directPayMethod, setDirectPayMethod] = useState<'cash' | 'card' | null>(null);
   const [directPayTotal, setDirectPayTotal] = useState('');
   const [directPayDiscount, setDirectPayDiscount] = useState('');
   const [directPayDiscountType, setDirectPayDiscountType] = useState<'flat' | 'pct'>('pct');
@@ -95,7 +95,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [showSplit, setShowSplit] = useState(false);
   const [splitQtys, setSplitQtys] = useState<Record<number, number>>({});
   const [splitBilliardInputs, setSplitBilliardInputs] = useState<Record<number, string>>({});
-  const [splitPayMethod, setSplitPayMethod] = useState<'cash' | 'card'>('cash');
+  const [splitPayMethod, setSplitPayMethod] = useState<'cash' | 'card' | null>(null);
   const [splitTotalInput, setSplitTotalInput] = useState('');
   const [splitDiscountInput, setSplitDiscountInput] = useState('');
   const [splitDiscountType, setSplitDiscountType] = useState<'flat' | 'pct'>('pct');
@@ -379,7 +379,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   // ── direct pay ───────────────────────────────────────────────
   function openDirectPay() {
-    setDirectPayMethod('cash');
+    setDirectPayMethod(null);
     setDirectPayTotal('');
     setDirectPayDiscount('');
     setDirectPayDiscountType('pct');
@@ -387,7 +387,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   async function handleDirectPay() {
-    if (directPaying || cartCount === 0) return;
+    if (directPaying || cartCount === 0 || !directPayMethod) return;
     const discountCents = computeDiscount(directPayDiscount, directPayDiscountType, cartTotal);
     const totalReceived = parseMoney(directPayTotal);
     const tipCents      = totalReceived > 0 ? Math.max(0, totalReceived - (cartTotal - discountCents)) : 0;
@@ -530,7 +530,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   function openSplitModal() {
     setSplitQtys({});
     setSplitBilliardInputs({});
-    setSplitPayMethod('cash');
+    setSplitPayMethod(null);
     setSplitTotalInput('');
     setSplitDiscountInput('');
     setSplitDiscountType('pct');
@@ -545,7 +545,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   async function handleSplitPay() {
-    if (!selectedId || splitting) return;
+    if (!selectedId || splitting || !splitPayMethod) return;
     const items = (selectedTab?.items ?? []).flatMap(i => {
       if (i.kind === 'billiard') {
         const amount = Math.min(i.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[i.id] ?? '')));
@@ -578,7 +578,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   // ── close tab ────────────────────────────────────────────────
   function openCloseModal() {
-    setPayMethod('cash');
+    setPayMethod(null);
     setTotalInput('');
     setDiscountInput('');
     setDiscountType('pct');
@@ -586,7 +586,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }
 
   async function handleCloseTab() {
-    if (!selectedId || closing) return;
+    if (!selectedId || closing || !payMethod) return;
     const subtotal      = selectedTab?.running_total_cents ?? 0;
     const discountCents = computeDiscount(discountInput, discountType, subtotal);
     const totalReceived = parseMoney(totalInput);
@@ -1260,8 +1260,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               <div className="modal__footer" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 {renderPrintToggle()}
                 <button className="btn btn--ghost" onClick={() => setShowDirectPay(false)}>Cancel</button>
-                <button className="btn btn--primary" onClick={handleDirectPay} disabled={directPaying} style={{ flex: 1 }}>
-                  {directPaying ? 'Processing…' : `Confirm ${directPayMethod === 'cash' ? 'cash' : 'card'} — ${formatMoney(total)}`}
+                <button className="btn btn--primary" onClick={handleDirectPay} disabled={directPaying || !directPayMethod} style={{ flex: 1 }}>
+                  {directPaying
+                    ? 'Processing…'
+                    : !directPayMethod
+                    ? 'Select payment method'
+                    : `Confirm ${directPayMethod} — ${formatMoney(total)}`}
                 </button>
               </div>
             </div>
@@ -1527,13 +1531,15 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 <button
                   className="btn btn--primary"
                   onClick={handleSplitPay}
-                  disabled={splitting || splitTotal === 0}
+                  disabled={splitting || splitTotal === 0 || !splitPayMethod}
                   style={{ flex: 1 }}
                 >
                   {splitting
                     ? 'Processing…'
                     : splitTotal === 0
                     ? 'Select items to pay'
+                    : !splitPayMethod
+                    ? 'Select payment method'
                     : `Confirm ${splitPayMethod} — ${formatMoney(splitTotal)}`}
                 </button>
               </div>
@@ -1645,8 +1651,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               </div>
               <div className="modal__footer" style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn--ghost" onClick={() => setShowClose(false)}>Cancel</button>
-                <button className="btn btn--primary" onClick={handleCloseTab} disabled={closing} style={{ flex: 1 }}>
-                  {closing ? 'Closing…' : `Confirm ${payMethod === 'cash' ? 'cash' : 'card'} — ${formatMoney(total)}`}
+                <button className="btn btn--primary" onClick={handleCloseTab} disabled={closing || !payMethod} style={{ flex: 1 }}>
+                  {closing
+                    ? 'Closing…'
+                    : !payMethod
+                    ? 'Select payment method'
+                    : `Confirm ${payMethod} — ${formatMoney(total)}`}
                 </button>
               </div>
             </div>
