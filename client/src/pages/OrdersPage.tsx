@@ -774,9 +774,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     ? tabs.filter(t => foldDiacritics(t.customer_name).includes(foldDiacritics(tabSearch)))
     : tabs;
 
-  // Billiard tabs sit on top, ordered by table number (1,2,3,4,5); the rest keep
-  // their opened_at order below (Array.sort is stable, so returning 0 preserves it).
+  // Parked tabs sink below all active open tabs. Within each group, billiard
+  // tabs sit on top ordered by table number (1,2,3,4,5) and the rest keep their
+  // opened_at order (Array.sort is stable, so returning 0 preserves it).
   const sortedTabs = [...filteredTabs].sort((a, b) => {
+    if (!!a.parked !== !!b.parked) return a.parked ? 1 : -1;
     const an = billiardTableNumber(a);
     const bn = billiardTableNumber(b);
     if (an !== null && bn !== null) return an - bn;
