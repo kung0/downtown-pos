@@ -597,6 +597,137 @@ router.post('/:id/close', async (req: Request, res: Response) => {
   res.json(closedTab);
 });
 
+// POST /api/tabs/:id/correct-tip — fix the tip on a closed tab, compliantly.
+// Closed tabs are immutable, so we do NOT edit the original. Instead we book a
+// Storno (voided, negated copy referencing the original) that reverses it, plus
+// a fresh reissue closed with the corrected tip. Original + Storno net to zero
+// and the reissue carries the right figure. Only the current shift's tabs are
+// eligible, so the storno + reissue land in the same open shift as the original.
+router.post('/:id/correct-tip', async (req: Request, res: Response) => {
+  const origId = Number(req.params.id);
+  const newTip = Math.max(0, Math.floor(Number(req.body.tip_cents)));
+  if (!Number.isFinite(newTip)) {
+    return void res.status(400).json({ error: 'tip_cents must be a number' });
+  }
+
+  const sessionId = getActiveSessionId();
+  if (!sessionId) return void res.status(403).json({ error: 'no shift is open — open a shift first' });
+
+  const orig = db.prepare('SELECT * FROM tabs WHERE id = ?').get(origId) as any;
+  if (!orig) return void res.status(404).json({ error: 'tab not found' });
+  if (orig.status !== 'closed') return void res.status(400).json({ error: 'only a closed tab can have its tip corrected' });
+  if (orig.session_id !== sessionId) {
+    return void res.status(409).json({ error: 'tab belongs to another shift — only current-shift tabs can be corrected' });
+  }
+  const alreadyVoided = db.prepare("SELECT id FROM tabs WHERE original_tab_id = ? AND status = 'voided'").get(origId);
+  if (alreadyVoided) return void res.status(409).json({ error: 'this tab has already been corrected' });
+  if ((orig.tip_cents ?? 0) === newTip) return void res.status(400).json({ error: 'tip is unchanged' });
+
+  const items = db.prepare(
+    'SELECT * FROM line_items WHERE tab_id = ? ORDER BY created_at ASC, id ASC'
+  ).all(origId) as any[];
+
+  // The corrected sale keeps the same goods + discount; only the tip differs.
+  const disc = Math.max(0, orig.discount_cents ?? 0);
+  const rawTax = computeTaxBreakdown(items);
+  const discApplied = Math.min(disc, rawTax.subtotal_cents);
+  const tax = applyDiscountToTax(rawTax, discApplied);
+  const reissueTotal = tax.subtotal_cents + newTip;
+  const pay = orig.payment_method as 'cash' | 'card';
+
+  // Sign both transactions (async) before opening the DB transaction. The storno
+  // signs the reversal (negated amounts); the reissue signs the corrected sale.
+  const stornoSign = await signOrOffline({
+    payment_method: pay,
+    subtotal_standard_cents: -(orig.subtotal_standard_cents ?? 0),
+    subtotal_reduced_cents: -(orig.subtotal_reduced_cents ?? 0),
+    tip_cents: -(orig.tip_cents ?? 0),
+    total_cents: -(orig.total_cents ?? 0),
+  });
+  if (stornoSign.error) return void res.status(502).json({ error: `TSE signing failed: ${stornoSign.error}` });
+  const reissueSign = await signOrOffline({
+    payment_method: pay,
+    subtotal_standard_cents: tax.subtotal_standard_cents,
+    subtotal_reduced_cents: tax.subtotal_reduced_cents,
+    tip_cents: newTip,
+    total_cents: reissueTotal,
+  });
+  if (reissueSign.error) return void res.status(502).json({ error: `TSE signing failed: ${reissueSign.error}` });
+
+  const now = new Date().toISOString();
+  const insItem = db.prepare(`
+    INSERT INTO line_items (tab_id, product_id, variant_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const doCorrect = db.transaction(() => {
+    // ── 1. Storno: voided, negated copy that reverses the original ──
+    const { lastInsertRowid: sRow } = db.prepare(
+      "INSERT INTO tabs (customer_name, status, opened_at, tip_cents, session_id) VALUES (?, 'voided', ?, 0, ?)"
+    ).run(`${orig.customer_name} · Storno`, now, sessionId);
+    const stornoId = Number(sRow);
+    // Negate quantity so both revenue and unit counts net out in reports.
+    for (const it of items) {
+      insItem.run(stornoId, it.product_id, it.variant_id ?? null, it.name_snapshot,
+        it.price_snapshot_cents, it.tax_category_snapshot, -it.quantity, it.note, it.kind, now);
+    }
+    db.prepare(`
+      UPDATE tabs SET
+        closed_at = ?, voided_at = ?, void_reason = ?, original_tab_id = ?,
+        payment_method = ?, subtotal_cents = ?, discount_cents = ?, tax_cents = ?,
+        tax_standard_cents = ?, tax_reduced_cents = ?, subtotal_standard_cents = ?, subtotal_reduced_cents = ?,
+        tip_cents = ?, total_cents = ?,
+        tse_signature = ?, tse_start_time = ?, tse_timestamp = ?, tse_transaction_number = ?, tse_signature_counter = ?, tse_status = ?
+      WHERE id = ?
+    `).run(
+      now, now, 'Trinkgeld-Korrektur', origId,
+      pay, -(orig.subtotal_cents ?? 0), -discApplied, -(orig.tax_cents ?? 0),
+      -(orig.tax_standard_cents ?? 0), -(orig.tax_reduced_cents ?? 0), -(orig.subtotal_standard_cents ?? 0), -(orig.subtotal_reduced_cents ?? 0),
+      -(orig.tip_cents ?? 0), -(orig.total_cents ?? 0),
+      stornoSign.tse?.tse_signature ?? null, stornoSign.tse?.tse_start_time ?? null,
+      stornoSign.tse?.tse_timestamp ?? null, stornoSign.tse?.tse_transaction_number ?? null,
+      stornoSign.tse?.tse_signature_counter ?? null, stornoSign.tse ? 'ok' : 'offline',
+      stornoId,
+    );
+    logEvent('tab_voided', stornoId, { original_tab_id: origId, reason: 'Trinkgeld-Korrektur' });
+
+    // ── 2. Reissue: fresh closed sale with the corrected tip ──
+    const { lastInsertRowid: rRow } = db.prepare(
+      "INSERT INTO tabs (customer_name, status, opened_at, tip_cents, session_id) VALUES (?, 'open', ?, 0, ?)"
+    ).run(orig.customer_name, now, sessionId);
+    const reissueId = Number(rRow);
+    for (const it of items) {
+      insItem.run(reissueId, it.product_id, it.variant_id ?? null, it.name_snapshot,
+        it.price_snapshot_cents, it.tax_category_snapshot, it.quantity, it.note, it.kind, now);
+    }
+    writeClose(reissueId, {
+      closed_at: now, payment_method: pay, tax, discount_cents: discApplied,
+      tip_cents: newTip, total_cents: reissueTotal,
+      card_auth_code: orig.card_auth_code, card_masked_pan: orig.card_masked_pan, tse: reissueSign.tse,
+    });
+    logEvent('tab_closed', reissueId, {
+      payment_method: pay, subtotal: tax.subtotal_cents + discApplied, discount: discApplied,
+      tax: tax.tax_cents, tip: newTip, total: reissueTotal, corrected_from_tab_id: origId,
+      tse_transaction_number: reissueSign.tse?.tse_transaction_number ?? null,
+    });
+
+    // Record the correction on the original tab's own activity trail.
+    logEvent('tip_corrected', origId, {
+      old_tip: orig.tip_cents ?? 0, new_tip: newTip, storno_tab_id: stornoId, reissue_tab_id: reissueId,
+    });
+
+    return { stornoId, reissueId };
+  });
+
+  const { stornoId, reissueId } = doCorrect();
+  const storno = buildTab(stornoId)!;
+  const reissue = buildTab(reissueId)!;
+  broadcast({ type: 'tab:voided', data: storno });
+  broadcast({ type: 'tab:closed', data: reissue });
+  maybePrint(reissue);
+  res.status(201).json({ storno, reissue });
+});
+
 // PATCH /api/tabs/:id/park — mark tab as parked (customer left without paying)
 router.patch('/:id/park', (req: Request, res: Response) => {
   const tabId = Number(req.params.id);

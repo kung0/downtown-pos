@@ -3,7 +3,7 @@ import type { Tab, TabEvent, WSMessage } from '@downtown/shared';
 import { tabsApi, printerApi } from '../api';
 import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { formatDateTime, formatTime } from '../utils/time';
-import { formatMoney } from '../utils/money';
+import { formatMoney, parseMoneyAny } from '../utils/money';
 import { foldDiacritics } from '../utils/text';
 import { useSession } from '../context/SessionContext';
 
@@ -52,6 +52,11 @@ export default function HistoryPage() {
     foldDiacritics(t.customer_name).includes(foldDiacritics(search))
   );
 
+  // A closed tab already reversed by a Storno can't be corrected again.
+  const supersededIds = new Set(
+    tabs.filter(t => t.status === 'voided' && t.original_tab_id != null).map(t => t.original_tab_id)
+  );
+
   return (
     <div className="page">
       <div className="page__header">
@@ -89,6 +94,12 @@ export default function HistoryPage() {
               tab={tab}
               expanded={expandedId === tab.id}
               onToggle={() => setExpanded(prev => prev === tab.id ? null : tab.id)}
+              correctable={
+                tab.status === 'closed' &&
+                sessionId != null &&
+                tab.session_id === sessionId &&
+                !supersededIds.has(tab.id)
+              }
             />
           ))}
         </div>
@@ -106,6 +117,8 @@ function describeEvent(e: TabEvent): string {
     case 'tab_updated': return `Notiz geändert`;
     case 'tab_closed':  return `Bezahlt · ${p.payment_method as string} · ${formatMoney(p.total as number)}`;
     case 'tab_deleted': return `Gelöscht`;
+    case 'tab_voided':  return `Storniert`;
+    case 'tip_corrected': return `Trinkgeld korrigiert · ${formatMoney(p.old_tip as number)} → ${formatMoney(p.new_tip as number)}`;
     case 'split_paid':  return `Split bezahlt`;
     default:            return e.event_type;
   }
@@ -116,7 +129,7 @@ function ActivityDot({ type }: { type: string }) {
   return <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0, marginTop: 4 }} />;
 }
 
-function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean; onToggle: () => void }) {
+function HistoryCard({ tab, expanded, onToggle, correctable }: { tab: Tab; expanded: boolean; onToggle: () => void; correctable: boolean }) {
   const closedAt = tab.closed_at ?? tab.voided_at ?? tab.deleted_at;
   const displayTime = closedAt ?? tab.opened_at;
   const runningTotal = tab.total_cents ?? (tab.items?.reduce((s, i) => s + i.price_snapshot_cents * i.quantity, 0) ?? 0);
@@ -125,6 +138,35 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
   const [showActivity, setShowActivity] = useState(false);
   const [events, setEvents] = useState<TabEvent[] | null>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+  const [tipInput, setTipInput] = useState('');
+  const [savingTip, setSavingTip] = useState(false);
+  const [tipErr, setTipErr] = useState('');
+
+  function openCorrect(e: React.MouseEvent) {
+    e.stopPropagation();
+    setTipErr('');
+    setTipInput(((tab.tip_cents ?? 0) / 100).toFixed(2).replace('.', ','));
+    setCorrecting(true);
+  }
+
+  async function saveTip(e: React.MouseEvent) {
+    e.stopPropagation();
+    const cents = parseMoneyAny(tipInput);
+    if (cents == null || cents < 0) { setTipErr('Ungültiger Betrag'); return; }
+    if (cents === (tab.tip_cents ?? 0)) { setTipErr('Trinkgeld unverändert'); return; }
+    setSavingTip(true);
+    setTipErr('');
+    try {
+      await tabsApi.correctTip(tab.id, cents);
+      setCorrecting(false);
+      // The storno + reissue arrive over WebSocket; nothing else to do here.
+    } catch (err) {
+      setTipErr((err as Error).message);
+    } finally {
+      setSavingTip(false);
+    }
+  }
 
   async function toggleActivity(e: React.MouseEvent) {
     e.stopPropagation();
@@ -280,6 +322,11 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
               {printMsg && (
                 <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>{printMsg}</span>
               )}
+              {correctable && !correcting && (
+                <button className="btn" style={{ fontSize: '13px', padding: '5px 12px' }} onClick={openCorrect}>
+                  Trinkgeld korrigieren
+                </button>
+              )}
             </>)}
             <button
               className="btn btn--ghost"
@@ -289,6 +336,36 @@ function HistoryCard({ tab, expanded, onToggle }: { tab: Tab; expanded: boolean;
               {showActivity ? 'Bestellung' : 'Verlauf'}
             </button>
           </div>
+
+          {correcting && (
+            <div style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                Storniert die alte Buchung und bucht mit korrigiertem Trinkgeld neu (TSE-konform).
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <label style={{ fontSize: '13px' }}>Neues Trinkgeld €</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={tipInput}
+                  onChange={e => setTipInput(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '90px', padding: '6px 8px', fontSize: '14px',
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                    background: 'var(--surface)', color: 'var(--text)',
+                  }}
+                />
+                <button className="btn btn--primary" style={{ fontSize: '13px', padding: '5px 12px' }} onClick={saveTip} disabled={savingTip}>
+                  {savingTip ? 'Speichern…' : 'Speichern'}
+                </button>
+                <button className="btn btn--ghost" style={{ fontSize: '13px', padding: '5px 12px' }} onClick={e => { e.stopPropagation(); setCorrecting(false); }} disabled={savingTip}>
+                  Abbrechen
+                </button>
+                {tipErr && <span style={{ fontSize: '13px', color: 'var(--danger)' }}>{tipErr}</span>}
+              </div>
+            </div>
+          )}
 
           {showActivity && (
             <div style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>

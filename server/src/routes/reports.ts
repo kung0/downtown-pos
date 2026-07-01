@@ -33,9 +33,11 @@ router.get('/daily', (req: Request, res: Response) => {
     new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Berlin' });
 
   const [startUtc, endUtc] = berlinDayRangeUtc(date);
+  // 'voided' Storno records carry negated amounts (closed_at set to the reversal
+  // time) so they net out the originals they reverse within the same day.
   const closed = db.prepare(`
     SELECT * FROM tabs
-    WHERE status = 'closed'
+    WHERE status IN ('closed', 'voided')
     AND closed_at >= ? AND closed_at < ?
   `).all(startUtc, endUtc) as any[];
 

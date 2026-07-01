@@ -112,6 +112,8 @@ export const tabsApi = {
       method: 'POST',
       body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }),
     }),
+  correctTip: (tabId: number, tip_cents: number) =>
+    req<{ storno: Tab; reissue: Tab }>(`/tabs/${tabId}/correct-tip`, { method: 'POST', body: JSON.stringify({ tip_cents }) }),
   history: (sessionId?: number) => req<Tab[]>('/tabs/history' + (sessionId != null ? `?session_id=${sessionId}` : '')),
   events: (tabId: number) => req<TabEvent[]>(`/tabs/${tabId}/events`),
   park: (tabId: number) => req<Tab>(`/tabs/${tabId}/park`, { method: 'PATCH' }),

@@ -161,9 +161,19 @@ export function writeClose(tabId: number, p: CloseSaleParams): void {
 // Shared by the daily report and the per-shift summary. Returns zeros (and an
 // empty by_category) for an empty input.
 export function summarizeClosedTabs(closed: any[]) {
+  // Money is summed over every row incl. 'voided' Storni: their negated amounts
+  // net out the originals they reverse, so totals stay exact even if a tip
+  // correction lands in a different report window than the original sale.
   const sum = (field: string) => closed.reduce((s: number, t: any) => s + (t[field] ?? 0), 0);
   const cashTabs = closed.filter((t: any) => t.payment_method === 'cash');
   const cardTabs = closed.filter((t: any) => t.payment_method === 'card');
+
+  // Counts, by contrast, are "real" sales only: drop the voided Storni and the
+  // originals they superseded, so a correction doesn't inflate tab_count / avg.
+  const supersededIds = new Set(
+    closed.filter((t: any) => t.status === 'voided' && t.original_tab_id != null).map((t: any) => t.original_tab_id)
+  );
+  const realTabs = closed.filter((t: any) => t.status !== 'voided' && !supersededIds.has(t.id));
 
   const ids = closed.map((t: any) => t.id);
   const ph = ids.length === 0 ? '' : ids.map(() => '?').join(',');
@@ -215,10 +225,10 @@ export function summarizeClosedTabs(closed: any[]) {
   `).all(...ids) as Array<{ name: string; qty: number }>;
 
   const total_cents = sum('total_cents');
-  const avg_tab_cents = closed.length > 0 ? Math.round(total_cents / closed.length) : 0;
+  const avg_tab_cents = realTabs.length > 0 ? Math.round(total_cents / realTabs.length) : 0;
 
   return {
-    tab_count: closed.length,
+    tab_count: realTabs.length,
     subtotal_cents: sum('subtotal_cents'),
     tip_cents: sum('tip_cents'),
     total_cents,
@@ -227,8 +237,8 @@ export function summarizeClosedTabs(closed: any[]) {
     tax_reduced_cents: sum('tax_reduced_cents'),
     cash_cents: cashTabs.reduce((s: number, t: any) => s + (t.total_cents ?? 0), 0),
     card_cents: cardTabs.reduce((s: number, t: any) => s + (t.total_cents ?? 0), 0),
-    cash_count: cashTabs.length,
-    card_count: cardTabs.length,
+    cash_count: realTabs.filter((t: any) => t.payment_method === 'cash').length,
+    card_count: realTabs.filter((t: any) => t.payment_method === 'card').length,
     avg_tab_cents,
     by_category,
     by_top_category,

@@ -356,8 +356,9 @@ export function buildBonpos(zRecords: ZRecord[], now: string, config: Settings):
         });
       }
 
-      // Tip as a separate exempt line
-      if (tab.tip_cents > 0) {
+      // Tip as a separate exempt line. Emit for non-zero (incl. negative Storno
+      // reversals) so tips net out in the export the same way goods do.
+      if (tab.tip_cents !== 0) {
         rows.push({
           ...base,
           BON_NR:           tab.id,

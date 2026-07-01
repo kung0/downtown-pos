@@ -8,8 +8,10 @@ import { sendToPrinter } from '../printer/client';
 const router = Router();
 
 function buildSummary(sessionRow: any) {
+  // Include 'voided' Storno records: they carry negated amounts and net out the
+  // originals they reverse (e.g. after a tip correction), so shift totals stay true.
   const closed = db.prepare(
-    "SELECT * FROM tabs WHERE session_id = ? AND status = 'closed'"
+    "SELECT * FROM tabs WHERE session_id = ? AND status IN ('closed', 'voided')"
   ).all(sessionRow.id) as any[];
 
   return { session: sessionRow, ...summarizeClosedTabs(closed) };
