@@ -19,7 +19,7 @@ function buildCatTree(cats: Category[]): CategoryGroup[] {
   }));
 }
 import { formatMoney, parseMoney, computeTax } from '../utils/money';
-import { elapsed, formatDateTime, formatTime } from '../utils/time';
+import { openedAtLabel, elapsed, formatDateTime, formatTime } from '../utils/time';
 
 function fmtDuration(startIso: string, endIso: string): string {
   const mins = Math.floor((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
@@ -834,7 +834,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 {t.parked ? <span className="badge badge--amber" style={{ marginLeft: 6, fontSize: 10 }}>Geparkt</span> : null}
               </div>
               <div className="tab-card__meta">
-                <span>{elapsed(t.opened_at)}</span>
+                <span>{openedAtLabel(t.opened_at)} · {elapsed(t.opened_at)}</span>
                 <span>{formatMoney(t.running_total_cents ?? 0)}</span>
               </div>
             </button>
@@ -933,7 +933,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <span className="detail-header__name-edit" aria-hidden>✏️</span>
                 </div>
               )}
-              <div className="detail-header__meta">opened {elapsed(selectedTab.opened_at)}</div>
+              <div className="detail-header__meta">opened {openedAtLabel(selectedTab.opened_at)}</div>
               {editingNotes ? (
                 <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                   <input
@@ -1878,7 +1878,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <button key={t.id} className="tab-pick-btn" onClick={() => handleAddCartToTab(t.id)}>
                     <span className="tab-pick-btn__name">{t.customer_name}</span>
                     <span className="tab-pick-btn__meta">
-                      {elapsed(t.opened_at)} · {formatMoney(t.running_total_cents ?? 0)}
+                      {openedAtLabel(t.opened_at)} · {formatMoney(t.running_total_cents ?? 0)}
                     </span>
                   </button>
                 ))}

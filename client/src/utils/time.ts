@@ -13,6 +13,15 @@ export function formatDateTime(isoUtc: string): string {
   });
 }
 
+// Clock time (HH:mm) when the timestamp falls on today in Berlin; otherwise the
+// full date + time, so a tab left open/parked across days reads unambiguously.
+export function openedAtLabel(isoUtc: string): string {
+  const berlinDay = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'Europe/Berlin' });
+  return berlinDay(new Date(isoUtc)) === berlinDay(new Date())
+    ? formatTime(isoUtc)
+    : formatDateTime(isoUtc);
+}
+
 export function elapsed(isoUtc: string): string {
   const mins = Math.floor((Date.now() - new Date(isoUtc).getTime()) / 60000);
   if (mins < 1) return 'just now';
