@@ -108,7 +108,7 @@ export const tabsApi = {
   quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number; custom_price_cents?: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
     req<Tab>('/tabs/quick-pay', { method: 'POST', body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }) }),
   splitPay: (tabId: number, items: Array<{ id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
-    req<{ paid_tab: Tab; remaining_tab: Tab }>(`/tabs/${tabId}/split-pay`, {
+    req<{ paid_tab: Tab; remaining_tab: Tab | null }>(`/tabs/${tabId}/split-pay`, {
       method: 'POST',
       body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }),
     }),

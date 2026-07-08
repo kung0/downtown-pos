@@ -567,7 +567,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setSplitting(true);
     try {
       const result = await tabsApi.splitPay(selectedId, items, splitPayMethod, tipCents, discountCents);
-      updateTab(result.remaining_tab);
+      if (result.remaining_tab) {
+        updateTab(result.remaining_tab);
+      } else {
+        // Paid everything — the original tab was closed out.
+        setTabs(prev => prev.filter(t => t.id !== selectedId));
+        setSelectedId(null);
+      }
       setShowSplit(false);
       setReceipt(result.paid_tab);
     } catch (e) {

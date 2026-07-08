@@ -454,6 +454,22 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     }
   }
 
+  // Does this split cover the entire remaining tab? If so we close the original
+  // tab outright rather than spawning a split copy and leaving behind an empty,
+  // uncloseable tab. A tab with a still-running billiard isn't truly empty, so
+  // it stays open in that case (the running charge gets billed later).
+  const allTabItems = db.prepare(
+    'SELECT id, kind, quantity, price_snapshot_cents FROM line_items WHERE tab_id = ?'
+  ).all(tabId) as any[];
+  const runningBilliard = db.prepare(
+    'SELECT id FROM billiard_sessions WHERE tab_id = ? AND ended_at IS NULL LIMIT 1'
+  ).get(tabId);
+  const paysEverything = !runningBilliard && allTabItems.every((it: any) =>
+    it.kind === 'billiard'
+      ? payAmounts.get(it.id) === it.price_snapshot_cents
+      : payQtys.get(it.id) === it.quantity
+  );
+
   const tip = Math.max(0, Math.floor(Number(tip_cents)));
   const now = new Date().toISOString();
   const berlinTime = new Date().toLocaleTimeString('de-DE', {
@@ -479,6 +495,21 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
   if (error) return void res.status(502).json({ error: `TSE signing failed: ${error}` });
 
   const doSplitPay = db.transaction(() => {
+    // Whole tab paid in one go — close the original tab directly. The tax/tse
+    // above were computed over the full amounts, so they already describe the
+    // entire tab. Returns null to signal "no split copy, original closed".
+    if (paysEverything) {
+      writeClose(tabId, {
+        closed_at: now, payment_method, tax, discount_cents: discSplit, tip_cents: tip, total_cents: total,
+        card_auth_code, card_masked_pan, tse,
+      });
+      logEvent('tab_closed', tabId, {
+        payment_method, subtotal: tax.subtotal_cents + discSplit, discount: discSplit, tax: tax.tax_cents, tip, total,
+        tse_transaction_number: tse?.tse_transaction_number ?? null,
+      });
+      return null;
+    }
+
     const splitName = `${tabRow.customer_name} · split ${berlinTime}`;
     const { lastInsertRowid } = db.prepare(
       "INSERT INTO tabs (customer_name, status, opened_at, tip_cents, session_id) VALUES (?, 'open', ?, 0, ?)"
@@ -534,6 +565,13 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
 
   try {
     const splitTabId = doSplitPay();
+    if (splitTabId === null) {
+      // Entire tab paid — original tab was closed, no remaining tab.
+      const closedTab = buildTab(tabId)!;
+      broadcast({ type: 'tab:closed', data: closedTab });
+      maybePrint(closedTab);
+      return void res.json({ paid_tab: closedTab, remaining_tab: null });
+    }
     const paidTab = buildTab(splitTabId)!;
     const remainingTab = buildTab(tabId)!;
     broadcast({ type: 'tab:closed', data: paidTab });
