@@ -115,6 +115,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const cartKeyRef = useRef(0);
   const selectedTab = tabs.find(t => t.id === selectedId) ?? null;
 
+  // keep the product search focused after a modal (variant / misc picker) steals it
+  const refocusProductSearch = () => setTimeout(() => productSearchRef.current?.focus(), 30);
+
   // ── cart helpers ──────────────────────────────────────────────
   const cartQty   = (id: number) => cart.filter(c => c.product.id === id).reduce((s, c) => s + c.quantity, 0);
   const cartTotal = cart.reduce((s, c) => s + (c.customPrice ?? c.variantPrice ?? c.product.price_cents) * c.quantity, 0);
@@ -158,6 +161,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setCart(prev => [...prev, { product, quantity: 1, variantId: variant.id, variantName: variant.name, variantPrice: product.price_cents + variant.price_cents, _key: k }]);
     }
     setVariantPicker(null);
+    refocusProductSearch();
   }
 
   function cartRemove(productId: number) {
@@ -175,6 +179,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setHighlightedKey(k);
     setCart(prev => [...prev, { product, quantity: 1, customPrice: priceCents, note: note || undefined, _key: k }]);
     setMiscModal(null);
+    refocusProductSearch();
   }
 
   function cartRemoveMisc(productId: number) {
@@ -1895,11 +1900,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
       {/* ── Variant picker ──────────────────────────────────────── */}
       {variantPicker && (
-        <div className="modal-overlay" onClick={() => setVariantPicker(null)}>
+        <div className="modal-overlay" onClick={() => { setVariantPicker(null); refocusProductSearch(); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal__header">
               <h2 className="modal__title">{variantPicker.name}</h2>
-              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setVariantPicker(null)}>✕</button>
+              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => { setVariantPicker(null); refocusProductSearch(); }}>✕</button>
             </div>
             <div className="modal__body">
               <div className="variant-picker-grid">
@@ -1924,12 +1929,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           const cents = parseMoney(miscModal.priceInput);
           if (cents > 0) cartAddMisc(miscModal.product, cents, miscModal.noteInput.trim() || undefined);
         };
+        const dismissMisc = () => { setMiscModal(null); refocusProductSearch(); };
         return (
-          <div className="modal-overlay" onClick={() => setMiscModal(null)}>
+          <div className="modal-overlay" onClick={dismissMisc}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 360 }}>
               <div className="modal__header">
                 <h2 className="modal__title">{miscModal.product.name}</h2>
-                <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setMiscModal(null)}>✕</button>
+                <button className="btn btn--ghost btn--sm btn--icon" onClick={dismissMisc}>✕</button>
               </div>
               <div className="modal__body">
                 <div className="field">
@@ -1961,7 +1967,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 </div>
               </div>
               <div className="modal__footer">
-                <button className="btn btn--ghost" onClick={() => setMiscModal(null)}>Abbrechen</button>
+                <button className="btn btn--ghost" onClick={dismissMisc}>Abbrechen</button>
                 <button
                   className="btn btn--primary"
                   disabled={parseMoney(miscModal.priceInput) <= 0}
