@@ -519,11 +519,18 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
 
     for (const dbItem of dbItems) {
       const paidAmount = payAmounts.get(dbItem.id)!;
+      // Products keep their real unit price × quantity so the split copy shows
+      // "2× Banh Mi @ 8 €", not a collapsed "1× @ 16 €" (which also undercounts
+      // units in reports). Billiard items have no unit price — the paid amount is
+      // a lump, so it's stored as a single line.
+      const isBilliard = dbItem.kind === 'billiard';
+      const qty = isBilliard ? 1 : payQtys.get(dbItem.id)!;
+      const unitPrice = isBilliard ? paidAmount : dbItem.price_snapshot_cents;
       db.prepare(`
         INSERT INTO line_items (tab_id, product_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(splitTabId, dbItem.product_id, dbItem.name_snapshot, paidAmount,
-         dbItem.tax_category_snapshot, 1, dbItem.note, dbItem.kind, now);
+      `).run(splitTabId, dbItem.product_id, dbItem.name_snapshot, unitPrice,
+         dbItem.tax_category_snapshot, qty, dbItem.note, dbItem.kind, now);
     }
 
     writeClose(splitTabId, {
