@@ -17,6 +17,7 @@ import sessionsRouter from './routes/sessions';
 import { initWSServer } from './ws/server';
 import { resumeActiveTickers } from './ws/ticker';
 import { startRetryLoop } from './services/tseRetry';
+import { startBackupLoop } from './db/backup';
 import { errorHandler } from './middleware/errors';
 import printerRouter from './routes/printer';
 import exportRouter from './routes/export';
@@ -29,6 +30,7 @@ console.log('  schema ready');
 seedIfEmpty();
 resumeActiveTickers();
 startRetryLoop();
+startBackupLoop();
 
 const app = express();
 app.use(cors());
