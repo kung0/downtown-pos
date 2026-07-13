@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import db from '../db/client';
 import { summarizeClosedTabs } from '../db/helpers';
+import { runBackup } from '../db/backup';
 import { buildShiftReport } from '../printer/escpos';
 import { sendToPrinter } from '../printer/client';
 
@@ -73,6 +74,9 @@ router.post('/:id/close', (req: Request, res: Response) => {
   if (printerIp) {
     sendToPrinter(printerIp, buildShiftReport(summary)).catch(() => {});
   }
+
+  // snapshot the DB after every shift close (fire and forget — don't block the response)
+  runBackup().catch((err) => console.error('backup failed:', err));
 });
 
 // GET /api/sessions/:id/summary — summary for any session
