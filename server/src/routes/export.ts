@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
 import archiver from 'archiver';
 import db from '../db/client';
+import { writeSnapshot } from '../db/backup';
 import { getSettings } from './settings';
 import {
   buildIndexXml,
@@ -17,6 +22,50 @@ import {
 } from '../services/dsfinvk';
 
 const router = Router();
+
+// Constant-time token compare so a mismatch can't be probed by timing.
+function tokensMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// GET /api/export/snapshot — stream a fresh, consistent copy of the live DB as
+// a single file. Lets another machine (e.g. the home Mac) PULL the database on
+// demand over Tailscale: `curl -H "X-Sync-Token: …" http://<bar-ip>:3001/api/export/snapshot -o downtown-latest.db`.
+// Guarded by SNAPSHOT_TOKEN so a random device on the bar wifi can't grab the
+// whole till; the endpoint is disabled entirely when the token is unset.
+router.get('/snapshot', async (req: Request, res: Response) => {
+  const expected = process.env.SNAPSHOT_TOKEN?.trim();
+  if (!expected) {
+    res.status(503).json({ error: 'snapshot endpoint disabled (SNAPSHOT_TOKEN unset)' });
+    return;
+  }
+
+  const provided = (req.get('x-sync-token') ?? (req.query.token as string) ?? '').trim();
+  if (!tokensMatch(provided, expected)) {
+    res.status(401).json({ error: 'invalid or missing token' });
+    return;
+  }
+
+  const tmpFile = path.join(os.tmpdir(), `downtown-snapshot-${Date.now()}.db`);
+  try {
+    await writeSnapshot(tmpFile);
+  } catch (err) {
+    console.error('snapshot failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'snapshot failed' });
+    return;
+  }
+
+  res.download(tmpFile, 'downtown-latest.db', (err) => {
+    // Clean up the temp file (and any stray sidecars) once the transfer ends,
+    // whether it succeeded or the client aborted.
+    for (const p of [tmpFile, `${tmpFile}-wal`, `${tmpFile}-shm`]) {
+      fs.unlink(p, () => {});
+    }
+    if (err) console.error('snapshot download failed:', err);
+  });
+});
 
 // Mirrors the Berlin-day-boundary logic from reports.ts so date ranges are consistent.
 function berlinDayStartUtc(year: number, month: number, day: number): Date {
