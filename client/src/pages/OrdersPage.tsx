@@ -74,6 +74,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [tabSearch, setTabSearch] = useState('');
   const [pickTabSearch, setPickTabSearch] = useState('');
   const [productSearch, setProductSearch] = useState('');
+  const [catParent, setCatParent] = useState<number | null>(null); // null = All
+  const [catSub, setCatSub] = useState<number | null>(null);       // null = whole parent
   const [showClose, setShowClose]       = useState(false);
   const [payMethod, setPayMethod]       = useState<'cash' | 'card' | null>(null);
   const [totalInput, setTotalInput]     = useState('');
@@ -326,11 +328,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   }, [jumpTabId, onJumpConsumed]);
 
   useEffect(() => {
-    if (view === 'products') setTimeout(() => productSearchRef.current?.focus(), 30);
+    if (view === 'products') {
+      setCatParent(null);
+      setCatSub(null);
+      setTimeout(() => productSearchRef.current?.focus(), 30);
+    }
   }, [view]);
 
   useEffect(() => {
-    if (selectedId === null) setTimeout(() => productSearchRef.current?.focus(), 30);
+    if (selectedId === null) {
+      setCatParent(null);
+      setCatSub(null);
+      setTimeout(() => productSearchRef.current?.focus(), 30);
+    }
   }, [selectedId]);
 
   function updateTab(updated: Tab) {
@@ -683,11 +693,75 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       categories.filter(c => isCategoryAvailableNow(c.id, catById)).map(c => c.name)
     );
     const categoryAvailable = (name: string) => availableCatNames.has(name);
+    const catHasProducts = (name: string) => products.some(p => p.category === name && p.available);
+
+    // Parents (with their in-window, non-empty children) that are worth a filter
+    // tab right now. Empty parents/subcategories are dropped so no dead tab/chip
+    // ever shows.
+    const filterParents = buildCatTree(categories)
+      .map(({ parent, children }) => ({
+        parent,
+        children: children.filter(ch => categoryAvailable(ch.name) && catHasProducts(ch.name)),
+      }))
+      .filter(g => g.children.length > 0);
+
+    const activeGroup = catParent != null ? filterParents.find(g => g.parent.id === catParent) : undefined;
+    const subName = catSub != null ? catById.get(catSub)?.name : undefined;
+    const parentChildNames = activeGroup ? new Set(activeGroup.children.map(c => c.name)) : null;
+    const catMatch = (p: Product) =>
+      subName != null ? p.category === subName
+        : parentChildNames ? parentChildNames.has(p.category)
+          : true;
 
     const query = foldDiacritics(productSearch.trim());
-    const visibleProducts = query
-      ? products.filter(p => p.available && categoryAvailable(p.category) && foldDiacritics(p.name).includes(query))
-      : null;
+    const productMatches = (p: Product) =>
+      p.available && categoryAvailable(p.category) && catMatch(p) &&
+      (!query || foldDiacritics(p.name).includes(query));
+
+    function renderCategoryFilter() {
+      if (filterParents.length === 0) return null;
+      const subs = activeGroup ? activeGroup.children : [];
+      return (
+        <div className="cat-filter">
+          <div className="cat-filter__row">
+            <button
+              className={`cat-tab${catParent === null ? ' cat-tab--active' : ''}`}
+              onClick={() => { setCatParent(null); setCatSub(null); }}
+            >
+              All
+            </button>
+            {filterParents.map(({ parent }) => (
+              <button
+                key={parent.id}
+                className={`cat-tab${catParent === parent.id ? ' cat-tab--active' : ''}`}
+                onClick={() => { setCatParent(parent.id); setCatSub(null); }}
+              >
+                {parent.name}
+              </button>
+            ))}
+          </div>
+          {subs.length > 0 && (
+            <div className="cat-filter__row cat-filter__row--sub">
+              <button
+                className={`subcat-chip${catSub === null ? ' subcat-chip--active' : ''}`}
+                onClick={() => setCatSub(null)}
+              >
+                All
+              </button>
+              {subs.map(child => (
+                <button
+                  key={child.id}
+                  className={`subcat-chip${catSub === child.id ? ' subcat-chip--active' : ''}`}
+                  onClick={() => setCatSub(child.id)}
+                >
+                  {child.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
 
     function renderCard(p: Product) {
       const stagedQty = cartQty(p.id);
@@ -742,42 +816,46 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       );
     }
 
-    return (
-      <div className="product-grid-scroll">
-        {visibleProducts ? (
-          visibleProducts.length === 0 ? (
-            <p style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '28px 0' }}>
-              no match
-            </p>
-          ) : (
-            <div className="product-category-section">
-              <div className="product-grid">{visibleProducts.map(renderCard)}</div>
+    const parentSections = buildCatTree(categories).map(({ parent, children }) => {
+      if (catParent != null && parent.id !== catParent) return null;
+      // A top-level category with no sub-categories (e.g. "Mittagsangebot")
+      // holds its products directly, so treat the parent itself as the leaf.
+      const leaves = children.length > 0 ? children : [parent];
+      const childSections = leaves
+        .filter(child => categoryAvailable(child.name))
+        .filter(child => catSub == null || child.id === catSub)
+        .map(child => ({
+          child,
+          catProducts: products.filter(p => p.category === child.name && productMatches(p)),
+        }))
+        .filter(({ catProducts }) => catProducts.length > 0);
+      if (childSections.length === 0) return null;
+      return (
+        <div key={parent.id} className="product-parent-section">
+          <div className="product-parent-label">{parent.name}</div>
+          {childSections.map(({ child, catProducts }) => (
+            <div key={child.id} className="product-category-section">
+              {child.id !== parent.id && <div className="product-category-label">{child.name}</div>}
+              <div className="product-grid">{catProducts.map(renderCard)}</div>
             </div>
-          )
+          ))}
+        </div>
+      );
+    }).filter(Boolean);
+
+    return (
+      <>
+      {renderCategoryFilter()}
+      <div className="product-grid-scroll">
+        {query && parentSections.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '28px 0' }}>
+            no match
+          </p>
         ) : (
-          buildCatTree(categories).map(({ parent, children }) => {
-            const childSections = children
-              .filter(child => categoryAvailable(child.name))
-              .map(child => ({
-                child,
-                catProducts: products.filter(p => p.category === child.name && p.available),
-              }))
-              .filter(({ catProducts }) => catProducts.length > 0);
-            if (childSections.length === 0) return null;
-            return (
-              <div key={parent.id} className="product-parent-section">
-                <div className="product-parent-label">{parent.name}</div>
-                {childSections.map(({ child, catProducts }) => (
-                  <div key={child.id} className="product-category-section">
-                    <div className="product-category-label">{child.name}</div>
-                    <div className="product-grid">{catProducts.map(renderCard)}</div>
-                  </div>
-                ))}
-              </div>
-            );
-          })
+          parentSections
         )}
       </div>
+      </>
     );
   }
 
