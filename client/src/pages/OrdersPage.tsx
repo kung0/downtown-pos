@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Tab, Product, ProductVariant, Category, WSMessage } from '@downtown/shared';
-import { tabsApi, productsApi, categoriesApi, printerApi } from '../api';
+import type { Tab, Product, ProductVariant, Category, WSMessage, PoolTable } from '@downtown/shared';
+import { tabsApi, productsApi, categoriesApi, printerApi, poolApi } from '../api';
 import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { foldDiacritics } from '../utils/text';
 import { isCategoryAvailableNow } from '../utils/availability';
@@ -111,6 +111,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [printError, setPrintError] = useState<{ customerName: string; message: string } | null>(null);
   const [variantPicker, setVariantPicker] = useState<Product | null>(null);
   const [miscModal, setMiscModal] = useState<{ product: Product; priceInput: string; noteInput: string } | null>(null);
+  const [showStartSession, setShowStartSession] = useState(false);
+  const [poolTables, setPoolTables] = useState<PoolTable[]>([]);
+  const [startingTableId, setStartingTableId] = useState<number | null>(null);
+  // Sessions staged to be stopped. Nothing is sent to the server until "Send to
+  // tab" — until then the session keeps running, so a discarded cart or a reload
+  // loses nothing (and the server won't let the tab close while it runs).
+  const [pendingStops, setPendingStops] = useState<Array<{ sessionId: number; tableId: number; label: string }>>([]);
+  const [sending, setSending] = useState(false);
 
   const newTabInputRef = useRef<HTMLInputElement>(null);
   const productSearchRef = useRef<HTMLInputElement>(null);
@@ -304,6 +312,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       } else if (msg.type === 'menu:product_deleted') {
         const { id } = msg.data as { id: number };
         setProducts(prev => prev.filter(p => p.id !== id));
+      } else if (msg.type === 'pool:session_started' || msg.type === 'pool:session_stopped') {
+        const table = msg.data as PoolTable;
+        setPoolTables(prev => prev.map(t => t.id === table.id ? table : t));
       } else if (msg.type === 'pool:tick') {
         const d = msg.data as { session_id: number; elapsed_seconds: number; running_cost_cents: number };
         setSessionTicks(prev => ({ ...prev, [d.session_id]: { elapsed_seconds: d.elapsed_seconds, running_cost_cents: d.running_cost_cents } }));
@@ -318,7 +329,19 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     setItemQtyOverrides({});
     setHighlightedKey(null);
     setCartExpanded(false);
+    setShowStartSession(false);
+    setPendingStops([]);
   }, [selectedId]);
+
+  // Drop staged stops for sessions that ended elsewhere (e.g. stopped from the
+  // pool page on another device) — otherwise "Send to tab" would 404 on them.
+  useEffect(() => {
+    const running = new Set((selectedTab?.active_sessions ?? []).map(s => s.id));
+    setPendingStops(prev => {
+      const next = prev.filter(p => running.has(p.sessionId));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [selectedTab]);
 
   useEffect(() => {
     if (!jumpTabId) return;
@@ -349,9 +372,9 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
   // ── tab-mode item actions ─────────────────────────────────────
   async function handleSendOrder() {
-    if (!selectedId) return;
+    if (!selectedId || sending) return;
     const hasOverrides = (selectedTab?.items ?? []).some(i => (itemQtyOverrides[i.id] ?? i.quantity) !== i.quantity);
-    if (cartCount === 0 && !hasOverrides) return;
+    if (cartCount === 0 && !hasOverrides && pendingStops.length === 0) return;
 
     // Capture what's being added for the order ticket (new items + qty bumps).
     const customerName = selectedTab?.customer_name ?? '';
@@ -363,6 +386,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       }
     }
 
+    setSending(true);
     try {
       let updated: Tab | undefined;
       for (const { product, quantity, note, variantId, customPrice } of cart) {
@@ -380,16 +404,33 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
           }
         }
       }
+      // Stop staged sessions last: the server prices them at this moment and
+      // writes the billiard line item itself, so it never hits the order ticket.
+      for (const { tableId } of pendingStops) {
+        await poolApi.stop(tableId);
+      }
+      if (pendingStops.length > 0) updated = await tabsApi.get(selectedId);
       if (updated) updateTab(updated);
       firePrintOrder(customerName, orderLines);
       setCart([]);
       setItemQtyOverrides({});
+      setPendingStops([]);
       setHighlightedKey(null);
       setPrintOrders(true);
       setView('detail');
       setProductSearch('');
     } catch (e) {
       alert((e as Error).message);
+      // A stop may have gone through before the failure — resync so the strip
+      // and the staged list reflect what actually happened.
+      try {
+        const fresh = await tabsApi.get(selectedId);
+        updateTab(fresh);
+        const stillRunning = new Set((fresh.active_sessions ?? []).map(s => s.id));
+        setPendingStops(prev => prev.filter(p => stillRunning.has(p.sessionId)));
+      } catch { /* leave state as-is */ }
+    } finally {
+      setSending(false);
     }
   }
 
@@ -540,6 +581,37 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     if (!selectedId) return;
     try { updateTab(await tabsApi.unpark(selectedId)); }
     catch (e) { alert((e as Error).message); }
+  }
+
+  // ── start a pool / dart session on this tab ──────────────────
+  async function openStartSession() {
+    setStartingTableId(null);
+    setShowStartSession(true);
+    try { setPoolTables(await poolApi.list()); }
+    catch (e) { alert((e as Error).message); setShowStartSession(false); }
+  }
+
+  async function handleStartSession(tableId: number) {
+    if (!selectedId || startingTableId !== null) return;
+    setStartingTableId(tableId);
+    try {
+      await poolApi.start(tableId, selectedId);
+      updateTab(await tabsApi.get(selectedId));
+      setShowStartSession(false);
+    } catch (e) {
+      alert((e as Error).message);
+      try { setPoolTables(await poolApi.list()); } catch { /* keep stale list */ }
+    } finally { setStartingTableId(null); }
+  }
+
+  function stageStop(sessionId: number, tableId: number, label: string) {
+    setPendingStops(prev => prev.some(p => p.sessionId === sessionId)
+      ? prev
+      : [...prev, { sessionId, tableId, label }]);
+  }
+
+  function unstageStop(sessionId: number) {
+    setPendingStops(prev => prev.filter(p => p.sessionId !== sessionId));
   }
 
   // ── split payment ────────────────────────────────────────────
@@ -1058,6 +1130,11 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 ⏸ Parken
               </button>
             )}
+            {!selectedTab.parked && (
+              <button className="btn btn--ghost btn--sm" onClick={openStartSession} title="Pool- oder Dart-Session auf diesen Tab starten">
+                🎱 Start session
+              </button>
+            )}
             <button className="btn btn--primary btn--sm" onClick={() => { setView('products'); setProductSearch(''); }}>
               + Add items
             </button>
@@ -1079,11 +1156,30 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 const mins = Math.floor(elapsedSecs / 60);
                 const h = Math.floor(mins / 60), m = mins % 60;
                 const elapsed = mins < 60 ? `${mins} min` : (m > 0 ? `${h}h ${m}m` : `${h}h`);
+                const staged = pendingStops.some(p => p.sessionId === session.id);
                 return (
                   <div key={session.id} className="active-session">
                     <span className="active-session__label">{session.table_label}</span>
                     <span className="active-session__elapsed">{elapsed}</span>
                     <span className="active-session__cost">{formatMoney(cost)}</span>
+                    {staged ? (
+                      <button
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => unstageStop(session.id)}
+                        disabled={sending}
+                        title="Keep the table running"
+                      >
+                        ↩ Undo stop
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn--danger btn--sm"
+                        onClick={() => stageStop(session.id, session.pool_table_id, session.table_label ?? 'Session')}
+                        disabled={sending}
+                      >
+                        Stop
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -1140,14 +1236,26 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
 
           {(() => {
             const hasOverrides = (selectedTab.items ?? []).some(i => (itemQtyOverrides[i.id] ?? i.quantity) !== i.quantity);
-            if (cartCount === 0 && !hasOverrides) return null;
+            if (cartCount === 0 && !hasOverrides && pendingStops.length === 0) return null;
+            // Staged sessions are still ticking, so their cost is read live off
+            // the ticker rather than snapshotted when Stop was tapped.
+            const stopsTotal = pendingStops.reduce(
+              (s, p) => s + (sessionTicks[p.sessionId]?.running_cost_cents ?? 0), 0
+            );
+            const parts = [
+              cartCount > 0 ? `${cartCount} new` : null,
+              hasOverrides ? 'qty changes' : null,
+              pendingStops.length > 0
+                ? `${pendingStops.map(p => p.label).join(', ')} ending`
+                : null,
+            ].filter(Boolean);
             return (
               <div className="cart-bar">
                 <div className="cart-bar__row">
-                  <span className="cart-bar__label">
-                    {cartCount > 0 && `${cartCount} new`}{cartCount > 0 && hasOverrides && ' · '}{hasOverrides && 'qty changes'}
-                  </span>
-                  {cartCount > 0 && <span className="cart-bar__total">{formatMoney(cartTotal)}</span>}
+                  <span className="cart-bar__label">{parts.join(' · ')}</span>
+                  {(cartCount > 0 || pendingStops.length > 0) && (
+                    <span className="cart-bar__total">{formatMoney(cartTotal + stopsTotal)}</span>
+                  )}
                 </div>
                 {renderPrintToggle(cartCount > 0 && highlightedKey !== null ? (
                   <button
@@ -1162,8 +1270,16 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   </button>
                 ) : undefined)}
                 <div className="cart-bar__actions">
-                  <button className="btn btn--ghost" onClick={() => { setCart([]); setItemQtyOverrides({}); }}>Discard</button>
-                  <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder}>Send to tab</button>
+                  <button
+                    className="btn btn--ghost"
+                    disabled={sending}
+                    onClick={() => { setCart([]); setItemQtyOverrides({}); setPendingStops([]); }}
+                  >
+                    Discard
+                  </button>
+                  <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSendOrder} disabled={sending}>
+                    {sending ? 'Sending…' : 'Send to tab'}
+                  </button>
                 </div>
               </div>
             );
@@ -1971,6 +2087,56 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                     </span>
                   </button>
                 ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Start pool / dart session on the selected tab ───────── */}
+      {showStartSession && selectedTab && (
+        <div className="modal-overlay" onClick={() => setShowStartSession(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal__header">
+              <h2 className="modal__title">Start session — {selectedTab.customer_name}</h2>
+              <button className="btn btn--ghost btn--sm btn--icon" onClick={() => setShowStartSession(false)}>✕</button>
+            </div>
+            <div className="tab-pick-list">
+              {(['billiard', 'dart'] as const).map(type => {
+                const ofType = poolTables.filter(t => t.type === type);
+                if (ofType.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <div className="waitlist-section-label">{type === 'billiard' ? 'Pool' : 'Dart'}</div>
+                    {ofType.map(t => {
+                      const busy = t.status !== 'free';
+                      return (
+                        <button
+                          key={t.id}
+                          className="tab-pick-btn"
+                          onClick={() => handleStartSession(t.id)}
+                          disabled={busy || startingTableId !== null}
+                          style={busy ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                          title={busy ? 'Table already in use' : undefined}
+                        >
+                          <span className="tab-pick-btn__name">{t.label}</span>
+                          <span className="tab-pick-btn__meta">
+                            {startingTableId === t.id
+                              ? 'Starting…'
+                              : busy
+                                ? t.active_session?.tab?.customer_name ?? 'In use'
+                                : 'Free'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {poolTables.length > 0 && poolTables.every(t => t.status !== 'free') && (
+                <p style={{ padding: '12px 24px', color: 'var(--text-muted)', fontSize: 13 }}>
+                  Alle Tische belegt.
+                </p>
+              )}
             </div>
           </div>
         </div>
