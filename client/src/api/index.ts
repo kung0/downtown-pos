@@ -114,6 +114,9 @@ export const tabsApi = {
     }),
   correctTip: (tabId: number, tip_cents: number) =>
     req<{ storno: Tab; reissue: Tab }>(`/tabs/${tabId}/correct-tip`, { method: 'POST', body: JSON.stringify({ tip_cents }) }),
+  // Returns the Storno — a new voided record. The original is left untouched.
+  voidTab: (tabId: number, reason: string) =>
+    req<Tab>(`/tabs/${tabId}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
   history: (sessionId?: number) => req<Tab[]>('/tabs/history' + (sessionId != null ? `?session_id=${sessionId}` : '')),
   events: (tabId: number) => req<TabEvent[]>(`/tabs/${tabId}/events`),
   park: (tabId: number) => req<Tab>(`/tabs/${tabId}/park`, { method: 'PATCH' }),

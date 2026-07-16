@@ -52,7 +52,7 @@ export default function HistoryPage() {
     foldDiacritics(t.customer_name).includes(foldDiacritics(search))
   );
 
-  // A closed tab already reversed by a Storno can't be corrected again.
+  // A closed tab already reversed by a Storno can't be corrected or voided again.
   const supersededIds = new Set(
     tabs.filter(t => t.status === 'voided' && t.original_tab_id != null).map(t => t.original_tab_id)
   );
@@ -94,7 +94,7 @@ export default function HistoryPage() {
               tab={tab}
               expanded={expandedId === tab.id}
               onToggle={() => setExpanded(prev => prev === tab.id ? null : tab.id)}
-              correctable={
+              amendable={
                 tab.status === 'closed' &&
                 sessionId != null &&
                 tab.session_id === sessionId &&
@@ -129,7 +129,7 @@ function ActivityDot({ type }: { type: string }) {
   return <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0, marginTop: 4 }} />;
 }
 
-function HistoryCard({ tab, expanded, onToggle, correctable }: { tab: Tab; expanded: boolean; onToggle: () => void; correctable: boolean }) {
+function HistoryCard({ tab, expanded, onToggle, amendable }: { tab: Tab; expanded: boolean; onToggle: () => void; amendable: boolean }) {
   const closedAt = tab.closed_at ?? tab.voided_at ?? tab.deleted_at;
   const displayTime = closedAt ?? tab.opened_at;
   const runningTotal = tab.total_cents ?? (tab.items?.reduce((s, i) => s + i.price_snapshot_cents * i.quantity, 0) ?? 0);
@@ -142,6 +142,10 @@ function HistoryCard({ tab, expanded, onToggle, correctable }: { tab: Tab; expan
   const [tipInput, setTipInput] = useState('');
   const [savingTip, setSavingTip] = useState(false);
   const [tipErr, setTipErr] = useState('');
+  const [voiding, setVoiding] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
+  const [savingVoid, setSavingVoid] = useState(false);
+  const [voidErr, setVoidErr] = useState('');
 
   function openCorrect(e: React.MouseEvent) {
     e.stopPropagation();
@@ -165,6 +169,23 @@ function HistoryCard({ tab, expanded, onToggle, correctable }: { tab: Tab; expan
       setTipErr((err as Error).message);
     } finally {
       setSavingTip(false);
+    }
+  }
+
+  async function saveVoid(e: React.MouseEvent) {
+    e.stopPropagation();
+    const reason = voidReason.trim();
+    if (!reason) { setVoidErr('Grund erforderlich'); return; }
+    setSavingVoid(true);
+    setVoidErr('');
+    try {
+      await tabsApi.voidTab(tab.id, reason);
+      setVoiding(false);
+      // The Storno arrives over WebSocket; the original stays as it is.
+    } catch (err) {
+      setVoidErr((err as Error).message);
+    } finally {
+      setSavingVoid(false);
     }
   }
 
@@ -322,9 +343,18 @@ function HistoryCard({ tab, expanded, onToggle, correctable }: { tab: Tab; expan
               {printMsg && (
                 <span style={{ fontSize: '13px', color: printMsg === 'Sent!' ? '#22c55e' : 'var(--danger)' }}>{printMsg}</span>
               )}
-              {correctable && !correcting && (
+              {amendable && !correcting && (
                 <button className="btn" style={{ fontSize: '13px', padding: '5px 12px' }} onClick={openCorrect}>
                   Trinkgeld korrigieren
+                </button>
+              )}
+              {amendable && !voiding && (
+                <button
+                  className="btn"
+                  style={{ fontSize: '13px', padding: '5px 12px', color: 'var(--danger, #e53e3e)' }}
+                  onClick={e => { e.stopPropagation(); setVoidErr(''); setVoidReason(''); setVoiding(true); }}
+                >
+                  Stornieren
                 </button>
               )}
             </>)}
@@ -363,6 +393,47 @@ function HistoryCard({ tab, expanded, onToggle, correctable }: { tab: Tab; expan
                   Abbrechen
                 </button>
                 {tipErr && <span style={{ fontSize: '13px', color: 'var(--danger)' }}>{tipErr}</span>}
+              </div>
+            </div>
+          )}
+
+          {voiding && (
+            <div style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                Bucht einen Storno über {formatMoney(-(tab.total_cents ?? 0))} gegen diese Rechnung (TSE-konform).
+                Die Original-Buchung bleibt unverändert bestehen.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <label style={{ fontSize: '13px' }}>Grund</label>
+                <input
+                  type="text"
+                  value={voidReason}
+                  placeholder="z.B. Falsch gebucht"
+                  onChange={e => setVoidReason(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    flex: 1, minWidth: '160px', padding: '6px 8px', fontSize: '14px',
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                    background: 'var(--surface)', color: 'var(--text)',
+                  }}
+                />
+                <button
+                  className="btn btn--danger"
+                  style={{ fontSize: '13px', padding: '5px 12px' }}
+                  onClick={saveVoid}
+                  disabled={savingVoid || !voidReason.trim()}
+                >
+                  {savingVoid ? 'Stornieren…' : 'Stornieren'}
+                </button>
+                <button
+                  className="btn btn--ghost"
+                  style={{ fontSize: '13px', padding: '5px 12px' }}
+                  onClick={e => { e.stopPropagation(); setVoiding(false); }}
+                  disabled={savingVoid}
+                >
+                  Abbrechen
+                </button>
+                {voidErr && <span style={{ fontSize: '13px', color: 'var(--danger)' }}>{voidErr}</span>}
               </div>
             </div>
           )}

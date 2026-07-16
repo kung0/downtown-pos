@@ -773,6 +773,95 @@ router.post('/:id/correct-tip', async (req: Request, res: Response) => {
   res.status(201).json({ storno, reissue });
 });
 
+// POST /api/tabs/:id/void — reverse a closed sale (Storno), compliantly.
+// The original is never touched: closed tabs are immutable. Instead we book a
+// voided, negated copy that references it. Original + Storno net to zero in the
+// reports, and summarizeClosedTabs drops both from the "real sale" counts.
+// Current-shift only, so the reversal lands in the same shift as the sale.
+router.post('/:id/void', async (req: Request, res: Response) => {
+  const origId = Number(req.params.id);
+  const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) return void res.status(400).json({ error: 'a void reason is required' });
+
+  const sessionId = getActiveSessionId();
+  if (!sessionId) return void res.status(403).json({ error: 'no shift is open — open a shift first' });
+
+  const orig = db.prepare('SELECT * FROM tabs WHERE id = ?').get(origId) as any;
+  if (!orig) return void res.status(404).json({ error: 'tab not found' });
+  if (orig.status !== 'closed') return void res.status(400).json({ error: 'only a closed tab can be voided' });
+  if (orig.session_id !== sessionId) {
+    return void res.status(409).json({ error: 'tab belongs to another shift — only current-shift tabs can be voided' });
+  }
+  const alreadyVoided = db.prepare("SELECT id FROM tabs WHERE original_tab_id = ? AND status = 'voided'").get(origId);
+  if (alreadyVoided) return void res.status(409).json({ error: 'this tab has already been voided' });
+
+  const items = db.prepare(
+    'SELECT * FROM line_items WHERE tab_id = ? ORDER BY created_at ASC, id ASC'
+  ).all(origId) as any[];
+  const pay = orig.payment_method as 'cash' | 'card';
+
+  // Sign the reversal (negated amounts) before opening the DB transaction.
+  const { tse, error } = await signOrOffline({
+    payment_method: pay,
+    subtotal_standard_cents: -(orig.subtotal_standard_cents ?? 0),
+    subtotal_reduced_cents: -(orig.subtotal_reduced_cents ?? 0),
+    tip_cents: -(orig.tip_cents ?? 0),
+    total_cents: -(orig.total_cents ?? 0),
+  });
+  if (error) return void res.status(502).json({ error: `TSE signing failed: ${error}` });
+
+  const now = new Date().toISOString();
+  const insItem = db.prepare(`
+    INSERT INTO line_items (tab_id, product_id, variant_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, note, kind, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const doVoid = db.transaction(() => {
+    const { lastInsertRowid } = db.prepare(
+      "INSERT INTO tabs (customer_name, status, opened_at, tip_cents, session_id) VALUES (?, 'voided', ?, 0, ?)"
+    ).run(`${orig.customer_name} · Storno`, now, sessionId);
+    const stornoId = Number(lastInsertRowid);
+
+    // Negate quantity so both revenue and unit counts net out in reports.
+    for (const it of items) {
+      insItem.run(stornoId, it.product_id, it.variant_id ?? null, it.name_snapshot,
+        it.price_snapshot_cents, it.tax_category_snapshot, -it.quantity, it.note, it.kind, now);
+    }
+
+    db.prepare(`
+      UPDATE tabs SET
+        closed_at = ?, voided_at = ?, void_reason = ?, original_tab_id = ?,
+        payment_method = ?, subtotal_cents = ?, discount_cents = ?, tax_cents = ?,
+        tax_standard_cents = ?, tax_reduced_cents = ?, subtotal_standard_cents = ?, subtotal_reduced_cents = ?,
+        tip_cents = ?, total_cents = ?,
+        tse_signature = ?, tse_start_time = ?, tse_timestamp = ?, tse_transaction_number = ?, tse_signature_counter = ?, tse_status = ?
+      WHERE id = ?
+    `).run(
+      now, now, reason, origId,
+      pay, -(orig.subtotal_cents ?? 0), -(orig.discount_cents ?? 0), -(orig.tax_cents ?? 0),
+      -(orig.tax_standard_cents ?? 0), -(orig.tax_reduced_cents ?? 0),
+      -(orig.subtotal_standard_cents ?? 0), -(orig.subtotal_reduced_cents ?? 0),
+      -(orig.tip_cents ?? 0), -(orig.total_cents ?? 0),
+      tse?.tse_signature ?? null, tse?.tse_start_time ?? null,
+      tse?.tse_timestamp ?? null, tse?.tse_transaction_number ?? null,
+      tse?.tse_signature_counter ?? null, tse ? 'ok' : 'offline',
+      stornoId,
+    );
+
+    logEvent('tab_voided', stornoId, { original_tab_id: origId, reason });
+    // Also record it on the original's own activity trail — the original row
+    // stays untouched, so its events are the only place the void shows up there.
+    logEvent('tab_voided', origId, { storno_tab_id: stornoId, reason });
+
+    return stornoId;
+  });
+
+  const stornoId = doVoid();
+  const storno = buildTab(stornoId)!;
+  broadcast({ type: 'tab:voided', data: storno });
+  res.status(201).json(storno);
+});
+
 // PATCH /api/tabs/:id/park — mark tab as parked (customer left without paying)
 router.patch('/:id/park', (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
