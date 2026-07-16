@@ -39,6 +39,9 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
   const [pagerInput, setPagerInput]             = useState('');
   const [notesInput, setNotesInput]             = useState('');
 
+  // parked tabs can't be picked for a table or the waiting list — the customer left
+  const pickableTabs = openTabs.filter(t => !t.parked);
+
   const [tableHistories, setTableHistories]   = useState<Map<number, BilliardHistoryItem[]>>(new Map());
   const [editingStartId, setEditingStartId]   = useState<number | null>(null);
   const [editStartValue, setEditStartValue]   = useState('');
@@ -613,11 +616,11 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
                 </div>
               </div>
             ) : (
-              <div style={{ paddingBottom: 4 }}>
+              <div className="tab-pick-list">
                 <button className="tab-pick-btn tab-pick-btn--new" onClick={() => setShowNewTab(true)}>
                   <span className="tab-pick-btn__name">+ New tab</span>
                 </button>
-                {openTabs.map(t => (
+                {pickableTabs.map(t => (
                   <button key={t.id} className="tab-pick-btn" onClick={() => handleStart(t.id)}>
                     <span className="tab-pick-btn__name">{t.customer_name}</span>
                     <span className="tab-pick-btn__meta">{formatMoney(t.running_total_cents ?? 0)}</span>
@@ -642,7 +645,7 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
 
             {addStep === 'tab' ? (
               /* Step 1: pick or create tab */
-              <div style={{ paddingBottom: 4 }}>
+              <div className="tab-pick-list">
                 {showNewTabForAdd ? (
                   <div className="modal__body">
                     <div className="field">
@@ -668,11 +671,11 @@ export default function PoolPage({ onOpenTab }: Props = {}) {
                     <button className="tab-pick-btn tab-pick-btn--new" onClick={() => setShowNewTabForAdd(true)}>
                       <span className="tab-pick-btn__name">+ New tab</span>
                     </button>
-                    {openTabs.length === 0 ? (
+                    {pickableTabs.length === 0 ? (
                       <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 13 }}>
                         No open tabs yet.
                       </p>
-                    ) : openTabs.map(t => (
+                    ) : pickableTabs.map(t => (
                       <button key={t.id} className="tab-pick-btn" onClick={() => selectTabForAdd(t)}>
                         <span className="tab-pick-btn__name">{t.customer_name}</span>
                         <span className="tab-pick-btn__meta">{formatMoney(t.running_total_cents ?? 0)}</span>

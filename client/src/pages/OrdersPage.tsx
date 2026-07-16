@@ -1960,7 +1960,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 autoFocus
               />
             </div>
-            <div style={{ paddingBottom: 4 }}>
+            <div className="tab-pick-list">
               {tabs
                 .filter(t => foldDiacritics(t.customer_name).includes(foldDiacritics(pickTabSearch)))
                 .map(t => (

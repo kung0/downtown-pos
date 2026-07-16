@@ -890,6 +890,13 @@ select.field__input { cursor: pointer; }
 .cart-bar__actions { display: flex; gap: 8px; }
 
 /* ── Tab picker modal list ── */
+/* scrolls inside the modal's max-height — min-height:0 lets the flex item shrink */
+.tab-pick-list {
+  padding-bottom: 4px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .tab-pick-btn {
   display: flex;
   align-items: center;
