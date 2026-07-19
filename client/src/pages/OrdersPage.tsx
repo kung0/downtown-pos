@@ -1359,7 +1359,10 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 className="btn btn--ghost"
                 style={{ flex: 1 }}
                 onClick={openCloseModal}
-                disabled={(selectedTab.running_total_cents ?? 0) === 0 || (selectedTab.active_sessions ?? []).length > 0}
+                // Items at 0 € are still closeable: a table paid off in full while
+                // running leaves a 0 € line behind, and that tab has to be able to
+                // close rather than sit open forever.
+                disabled={(selectedTab.items ?? []).length === 0 || (selectedTab.active_sessions ?? []).length > 0}
                 title={(selectedTab.active_sessions ?? []).length > 0 ? 'Stop the running table first' : undefined}
               >
                 Close & Pay
@@ -2189,6 +2192,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             </div>
             <div className="tab-pick-list">
               {tabs
+                .filter(t => !t.parked)
                 .filter(t => foldDiacritics(t.customer_name).includes(foldDiacritics(pickTabSearch)))
                 .map(t => (
                   <button key={t.id} className="tab-pick-btn" onClick={() => handleAddCartToTab(t.id)}>
