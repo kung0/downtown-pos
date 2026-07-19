@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Tab, Product, ProductVariant, Category, WSMessage, PoolTable } from '@downtown/shared';
+import type { Tab, Product, ProductVariant, Category, WSMessage, PoolTable, BilliardSession } from '@downtown/shared';
 import { tabsApi, productsApi, categoriesApi, printerApi, poolApi } from '../api';
 import { subscribe, subscribeResync } from '../lib/liveUpdates';
 import { foldDiacritics } from '../utils/text';
@@ -41,6 +41,29 @@ function billiardTableNumber(tab: Tab): number | null {
   return nums.length === 0 ? null : Math.min(...nums);
 }
 
+
+type SessionTick = { elapsed_seconds: number; running_cost_cents: number };
+
+// What a running table costs right now. Prefers the live ticker; falls back to
+// the cost the server priced when it built the tab, so a table never reads 0 €
+// in the seconds before the first tick lands.
+function sessionCost(session: BilliardSession, ticks: Record<number, SessionTick>): number {
+  return ticks[session.id]?.running_cost_cents ?? session.running_cost_cents ?? 0;
+}
+
+// Still owed on a running table: live cost minus what's already been split-paid
+// off it. Mirrors sessionDueCents on the server.
+function sessionDue(session: BilliardSession, ticks: Record<number, SessionTick>): number {
+  return Math.max(0, sessionCost(session, ticks) - (session.prepaid_cents ?? 0));
+}
+
+// A tab's total including its still-running tables — what the customer would pay
+// if they settled up this second. The stored running_total_cents only counts
+// line items, and a running table has no line item until it stops.
+function liveTabTotal(tab: Tab, ticks: Record<number, SessionTick>): number {
+  return (tab.running_total_cents ?? 0)
+    + (tab.active_sessions ?? []).reduce((s, session) => s + sessionDue(session, ticks), 0);
+}
 
 interface CartItem {
   product: Product;
@@ -93,11 +116,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   const [directPayDiscountType, setDirectPayDiscountType] = useState<'flat' | 'pct'>('pct');
   const [directPaying, setDirectPaying]   = useState(false);
   const [, setTick] = useState(0);
-  const [sessionTicks, setSessionTicks] = useState<Record<number, { elapsed_seconds: number; running_cost_cents: number }>>({});
+  const [sessionTicks, setSessionTicks] = useState<Record<number, SessionTick>>({});
   const [tabsPanelOpen, setTabsPanelOpen] = useState(() => window.innerWidth >= 768);
   const [showSplit, setShowSplit] = useState(false);
   const [splitQtys, setSplitQtys] = useState<Record<number, number>>({});
   const [splitBilliardInputs, setSplitBilliardInputs] = useState<Record<number, string>>({});
+  // Keyed by session id — amounts being paid against still-running tables.
+  const [splitSessionInputs, setSplitSessionInputs] = useState<Record<number, string>>({});
   const [splitPayMethod, setSplitPayMethod] = useState<'cash' | 'card' | null>(null);
   const [splitTotalInput, setSplitTotalInput] = useState('');
   const [splitDiscountInput, setSplitDiscountInput] = useState('');
@@ -618,6 +643,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   function openSplitModal() {
     setSplitQtys({});
     setSplitBilliardInputs({});
+    setSplitSessionInputs({});
     setSplitPayMethod(null);
     setSplitTotalInput('');
     setSplitDiscountInput('');
@@ -632,6 +658,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
     }));
   }
 
+  // Cents being paid against a running table, clamped to what's still owed on it
+  // right now. The clock only ever raises that ceiling, so a value typed a few
+  // seconds ago stays valid by the time the server re-checks it.
+  function splitSessionAmount(session: BilliardSession): number {
+    const typed = Math.max(0, parseMoney(splitSessionInputs[session.id] ?? ''));
+    return Math.min(typed, sessionDue(session, sessionTicks));
+  }
+
   async function handleSplitPay() {
     if (!selectedId || splitting || !splitPayMethod) return;
     const items = (selectedTab?.items ?? []).flatMap(i => {
@@ -642,18 +676,24 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       const qty = splitQtys[i.id] ?? 0;
       return qty > 0 ? [{ id: i.id, quantity: qty }] : [];
     });
-    if (items.length === 0) return;
-    const splitSubtotalForDiscount = (selectedTab?.items ?? []).reduce((s, i) => {
-      if (i.kind === 'billiard') return s + Math.min(i.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[i.id] ?? '')));
-      return s + i.price_snapshot_cents * (splitQtys[i.id] ?? 0);
-    }, 0);
+    const sessions = (selectedTab?.active_sessions ?? []).flatMap(s => {
+      const amount = splitSessionAmount(s);
+      return amount > 0 ? [{ id: s.id, amount_cents: amount }] : [];
+    });
+    if (items.length === 0 && sessions.length === 0) return;
+    const splitSubtotalForDiscount =
+      (selectedTab?.items ?? []).reduce((s, i) => {
+        if (i.kind === 'billiard') return s + Math.min(i.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[i.id] ?? '')));
+        return s + i.price_snapshot_cents * (splitQtys[i.id] ?? 0);
+      }, 0)
+      + sessions.reduce((s, x) => s + x.amount_cents, 0);
     const discountCents = computeDiscount(splitDiscountInput, splitDiscountType, splitSubtotalForDiscount);
     const totalReceived = parseMoney(splitTotalInput);
     const tipCents      = totalReceived > 0 ? Math.max(0, totalReceived - (splitSubtotalForDiscount - discountCents)) : 0;
 
     setSplitting(true);
     try {
-      const result = await tabsApi.splitPay(selectedId, items, splitPayMethod, tipCents, discountCents);
+      const result = await tabsApi.splitPay(selectedId, items, splitPayMethod, tipCents, discountCents, sessions);
       if (result.remaining_tab) {
         updateTab(result.remaining_tab);
       } else {
@@ -996,7 +1036,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
               </div>
               <div className="tab-card__meta">
                 <span>{openedAtLabel(t.opened_at)} · {elapsed(t.opened_at)}</span>
-                <span>{formatMoney(t.running_total_cents ?? 0)}</span>
+                <span>{formatMoney(liveTabTotal(t, sessionTicks))}</span>
               </div>
             </button>
             );
@@ -1152,7 +1192,8 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 const tick = sessionTicks[session.id];
                 const elapsedSecs = tick?.elapsed_seconds
                   ?? Math.floor((Date.now() - new Date(session.started_at).getTime()) / 1000);
-                const cost = tick?.running_cost_cents ?? 0;
+                const cost = sessionCost(session, sessionTicks);
+                const prepaid = session.prepaid_cents ?? 0;
                 const mins = Math.floor(elapsedSecs / 60);
                 const h = Math.floor(mins / 60), m = mins % 60;
                 const elapsed = mins < 60 ? `${mins} min` : (m > 0 ? `${h}h ${m}m` : `${h}h`);
@@ -1161,7 +1202,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <div key={session.id} className="active-session">
                     <span className="active-session__label">{session.table_label}</span>
                     <span className="active-session__elapsed">{elapsed}</span>
-                    <span className="active-session__cost">{formatMoney(cost)}</span>
+                    <span className="active-session__cost">
+                      {formatMoney(sessionDue(session, sessionTicks))}
+                      {prepaid > 0 && (
+                        <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
+                          von {formatMoney(cost)}
+                        </span>
+                      )}
+                    </span>
                     {staged ? (
                       <button
                         className="btn btn--ghost btn--sm"
@@ -1238,10 +1286,12 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             const hasOverrides = (selectedTab.items ?? []).some(i => (itemQtyOverrides[i.id] ?? i.quantity) !== i.quantity);
             if (cartCount === 0 && !hasOverrides && pendingStops.length === 0) return null;
             // Staged sessions are still ticking, so their cost is read live off
-            // the ticker rather than snapshotted when Stop was tapped.
-            const stopsTotal = pendingStops.reduce(
-              (s, p) => s + (sessionTicks[p.sessionId]?.running_cost_cents ?? 0), 0
-            );
+            // the ticker rather than snapshotted when Stop was tapped. Anything
+            // already paid off the table is netted out — that's what /stop bills.
+            const stopsTotal = pendingStops.reduce((s, p) => {
+              const session = (selectedTab.active_sessions ?? []).find(x => x.id === p.sessionId);
+              return s + (session ? sessionDue(session, sessionTicks) : 0);
+            }, 0);
             const parts = [
               cartCount > 0 ? `${cartCount} new` : null,
               hasOverrides ? 'qty changes' : null,
@@ -1289,7 +1339,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
             <div className="detail-total">
               <span className="detail-total__label">Total</span>
               <span className="detail-total__amount">
-                {formatMoney(selectedTab.running_total_cents ?? 0)}
+                {formatMoney(liveTabTotal(selectedTab, sessionTicks))}
               </span>
             </div>
             <div className="detail-actions">
@@ -1300,7 +1350,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                 className="btn btn--ghost"
                 style={{ flex: 1 }}
                 onClick={openSplitModal}
-                disabled={(selectedTab.running_total_cents ?? 0) === 0}
+                disabled={liveTabTotal(selectedTab, sessionTicks) === 0}
                 title="Pay selected items separately"
               >
                 Split
@@ -1544,29 +1594,42 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       {/* ── Split payment modal ────────────────────────────── */}
       {showSplit && selectedTab && (() => {
         const allItems = selectedTab.items ?? [];
+        // Still-running tables are payable too: they have no line item yet, so
+        // they're priced off the live clock and settled against the session.
+        const runningSessions = selectedTab.active_sessions ?? [];
         const getBilliardAmount = (item: typeof allItems[0]) =>
           Math.min(item.price_snapshot_cents, Math.max(0, parseMoney(splitBilliardInputs[item.id] ?? '')));
         const getItemAmount = (item: typeof allItems[0]) =>
           item.kind === 'billiard'
             ? getBilliardAmount(item)
             : item.price_snapshot_cents * (splitQtys[item.id] ?? 0);
-        const splitSubtotal = allItems.reduce((s, i) => s + getItemAmount(i), 0);
+        const splitSubtotal = allItems.reduce((s, i) => s + getItemAmount(i), 0)
+          + runningSessions.reduce((s, x) => s + splitSessionAmount(x), 0);
         const splitDiscount = computeDiscount(splitDiscountInput, splitDiscountType, splitSubtotal);
         const splitDue      = splitSubtotal - splitDiscount;
         const splitTotalReceived = parseMoney(splitTotalInput);
         const splitTip      = splitTotalReceived > 0 ? Math.max(0, splitTotalReceived - splitDue) : 0;
         const { standard: splitTaxStd, reduced: splitTaxRed } = computeTax(
-          allItems.filter(i => getItemAmount(i) > 0).map(i => ({
-            ...i, price_snapshot_cents: getItemAmount(i), quantity: 1,
-          })),
+          [
+            ...allItems.filter(i => getItemAmount(i) > 0).map(i => ({
+              ...i, price_snapshot_cents: getItemAmount(i), quantity: 1,
+            })),
+            // Pool/dart is always 19% standard.
+            ...runningSessions.filter(s => splitSessionAmount(s) > 0).map(s => ({
+              tax_category_snapshot: 'standard' as const,
+              price_snapshot_cents: splitSessionAmount(s), quantity: 1,
+            })),
+          ],
           splitDiscount
         );
         const splitTotal = splitDue + splitTip;
-        const allMaxed = allItems.length > 0 && allItems.every(i =>
-          i.kind === 'billiard'
-            ? getBilliardAmount(i) >= i.price_snapshot_cents
-            : (splitQtys[i.id] ?? 0) >= i.quantity
-        );
+        const allMaxed = (allItems.length > 0 || runningSessions.length > 0)
+          && allItems.every(i =>
+            i.kind === 'billiard'
+              ? getBilliardAmount(i) >= i.price_snapshot_cents
+              : (splitQtys[i.id] ?? 0) >= i.quantity
+          )
+          && runningSessions.every(s => splitSessionAmount(s) >= sessionDue(s, sessionTicks));
         return (
           <div className="modal-overlay" onClick={() => setShowSplit(false)}>
             <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
@@ -1582,6 +1645,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                       if (allMaxed) {
                         setSplitQtys({});
                         setSplitBilliardInputs({});
+                        setSplitSessionInputs({});
                       } else {
                         const qtys: Record<number, number> = {};
                         const bill: Record<number, string> = {};
@@ -1589,8 +1653,13 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                           if (i.kind === 'billiard') bill[i.id] = (i.price_snapshot_cents / 100).toFixed(2).replace('.', ',');
                           else qtys[i.id] = i.quantity;
                         });
+                        const sess: Record<number, string> = {};
+                        runningSessions.forEach(s => {
+                          sess[s.id] = (sessionDue(s, sessionTicks) / 100).toFixed(2).replace('.', ',');
+                        });
                         setSplitQtys(qtys);
                         setSplitBilliardInputs(bill);
+                        setSplitSessionInputs(sess);
                       }
                     }}
                   >
@@ -1598,6 +1667,48 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   </button>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
+                  {runningSessions.map(session => {
+                    const amount = splitSessionAmount(session);
+                    const active = amount > 0;
+                    const due = sessionDue(session, sessionTicks);
+                    const prepaid = session.prepaid_cents ?? 0;
+                    return (
+                      <div
+                        key={`session-${session.id}`}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 10px', borderRadius: 6,
+                          background: active ? 'var(--accent-subtle, rgba(99,102,241,.08))' : 'transparent',
+                          border: '1px solid',
+                          borderColor: active ? 'var(--accent, #6366f1)' : 'var(--border, #e2e8f0)',
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14 }}>
+                            {session.table_label ?? (session.table_type === 'dart' ? 'Dart' : 'Billard')}
+                            <span className="badge badge--amber" style={{ marginLeft: 6, fontSize: 10 }}>läuft</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            {formatMoney(sessionCost(session, sessionTicks))} so far
+                            {prepaid > 0 && ` · ${formatMoney(prepaid)} bereits bezahlt`}
+                            {` · ${formatMoney(due)} offen`}
+                          </div>
+                        </div>
+                        <div className="price-input" style={{ width: 96, flexShrink: 0 }}>
+                          <span className="price-input__prefix">€</span>
+                          <input
+                            className="field__input"
+                            placeholder="0,00"
+                            value={splitSessionInputs[session.id] ?? ''}
+                            onChange={e => setSplitSessionInputs(prev => ({ ...prev, [session.id]: e.target.value }))}
+                          />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: active ? 500 : 400, color: active ? 'inherit' : 'var(--text-muted)', flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
+                          {active ? formatMoney(amount) : '—'}
+                        </span>
+                      </div>
+                    );
+                  })}
                   {allItems.map(item => {
                     const amount = getItemAmount(item);
                     const active = amount > 0;
@@ -2083,7 +2194,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
                   <button key={t.id} className="tab-pick-btn" onClick={() => handleAddCartToTab(t.id)}>
                     <span className="tab-pick-btn__name">{t.customer_name}</span>
                     <span className="tab-pick-btn__meta">
-                      {openedAtLabel(t.opened_at)} · {formatMoney(t.running_total_cents ?? 0)}
+                      {openedAtLabel(t.opened_at)} · {formatMoney(liveTabTotal(t, sessionTicks))}
                     </span>
                   </button>
                 ))}

@@ -119,9 +119,15 @@ export interface BilliardSession {
   computed_cost_cents: number | null;
   line_item_id: number | null;
   created_at: string;
+  // Already paid via split-pay while the table was still running. Credited
+  // against the final cost when the session stops.
+  prepaid_cents: number;
   tab?: Pick<Tab, 'id' | 'customer_name'>;
   table_label?: string;
   table_type?: TableType;
+  // Cost at the moment the tab was built — server-side equivalent of a pool:tick,
+  // so a running session has a price before the first tick arrives.
+  running_cost_cents?: number;
 }
 
 export interface BilliardHistoryItem {

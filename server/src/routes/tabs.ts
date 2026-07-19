@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import db from '../db/client';
-import { buildTab, logEvent, computeTaxBreakdown, applyDiscountToTax, writeClose } from '../db/helpers';
+import { buildTab, logEvent, computeTaxBreakdown, applyDiscountToTax, writeClose, withRunningCost, sessionDueCents } from '../db/helpers';
 import { broadcast } from '../ws/server';
 import { signOrOffline } from '../services/tse';
 import { buildReceipt } from '../printer/escpos';
@@ -43,12 +43,12 @@ router.get('/', (_req: Request, res: Response) => {
      ORDER BY li.created_at ASC`
   ).all(...ids) as any[];
 
-  const allSessions = db.prepare(
+  const allSessions = withRunningCost(db.prepare(
     `SELECT bs.*, pt.label AS table_label, pt.type AS table_type
      FROM billiard_sessions bs
      JOIN pool_tables pt ON pt.id = bs.pool_table_id
      WHERE bs.tab_id IN (${ph}) AND bs.ended_at IS NULL`
-  ).all(...ids) as any[];
+  ).all(...ids) as any[]);
 
   const tabs = tabRows.map((row: any) => {
     const items = allItems.filter((i: any) => i.tab_id === row.id);
@@ -400,15 +400,25 @@ router.delete('/:id', (req: Request, res: Response) => {
 // items: Array<{ id, quantity, amount_cents? }>
 //   product items  → split by quantity
 //   billiard items → split by amount_cents (e.g. pay 6 € of a 12 € session)
+// sessions: Array<{ id, amount_cents }>
+//   still-running pool/dart sessions — paid against the live clock without
+//   stopping the table. The amount is credited on the session and deducted from
+//   the line item that /stop writes later.
 router.post('/:id/split-pay', async (req: Request, res: Response) => {
   const tabId = Number(req.params.id);
-  const { items: splitItems, payment_method, tip_cents = 0, discount_cents = 0, card_auth_code = null, card_masked_pan = null } = req.body;
+  const {
+    items: splitItems = [], sessions: splitSessions = [], payment_method,
+    tip_cents = 0, discount_cents = 0, card_auth_code = null, card_masked_pan = null,
+  } = req.body;
 
   if (!['cash', 'card'].includes(payment_method)) {
     return void res.status(400).json({ error: 'payment_method must be "cash" or "card"' });
   }
-  if (!Array.isArray(splitItems) || splitItems.length === 0) {
-    return void res.status(400).json({ error: 'items must be a non-empty array' });
+  if (!Array.isArray(splitItems) || !Array.isArray(splitSessions)) {
+    return void res.status(400).json({ error: 'items and sessions must be arrays' });
+  }
+  if (splitItems.length === 0 && splitSessions.length === 0) {
+    return void res.status(400).json({ error: 'nothing selected to pay' });
   }
 
   const tabRow = db.prepare("SELECT * FROM tabs WHERE id = ? AND status = 'open'").get(tabId) as any;
@@ -417,9 +427,37 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
   const sessionId = getActiveSessionId();
   if (!sessionId) return void res.status(403).json({ error: 'no shift is open' });
 
+  // Running sessions: price each against the live clock, then check what's being
+  // paid fits in what's still owed on it.
+  const reqSessions = splitSessions as Array<{ id: number; amount_cents: number }>;
+  const paySessions: Array<{ row: any; amount: number; name: string }> = [];
+  for (const reqSession of reqSessions) {
+    const row = db.prepare(`
+      SELECT bs.*, pt.label AS table_label, pt.type AS table_type
+      FROM billiard_sessions bs
+      JOIN pool_tables pt ON pt.id = bs.pool_table_id
+      WHERE bs.id = ? AND bs.tab_id = ? AND bs.ended_at IS NULL
+    `).get(reqSession.id, tabId) as any;
+    if (!row) {
+      return void res.status(400).json({
+        error: `session ${reqSession.id} is not a running session on this tab`,
+      });
+    }
+    const [live] = withRunningCost([row]);
+    const due = sessionDueCents(live);
+    const amount = Math.floor(Number(reqSession.amount_cents ?? 0));
+    if (amount < 1 || amount > due) {
+      return void res.status(400).json({
+        error: `invalid amount_cents ${amount} for session ${row.id} (max ${due})`,
+      });
+    }
+    paySessions.push({ row, amount, name: row.table_type === 'dart' ? 'Dart' : 'Billard' });
+  }
+
   const itemIds = (splitItems as Array<{ id: number; quantity: number; amount_cents?: number }>).map(i => i.id);
   const placeholders = itemIds.map(() => '?').join(',');
-  const dbItems = db.prepare(
+  // `IN ()` is a syntax error in SQLite — a sessions-only split has no item ids.
+  const dbItems = itemIds.length === 0 ? [] : db.prepare(
     `SELECT * FROM line_items WHERE id IN (${placeholders}) AND tab_id = ?`
   ).all(...itemIds, tabId) as any[];
 
@@ -476,11 +514,19 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
     timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit',
   });
 
-  const rawTaxSplit = computeTaxBreakdown(dbItems.map((dbItem: any) => ({
-    price_snapshot_cents: payAmounts.get(dbItem.id)!,
-    quantity: 1,
-    tax_category_snapshot: dbItem.tax_category_snapshot,
-  })));
+  // Pool/dart is always 19% standard, same as the line item /stop writes.
+  const rawTaxSplit = computeTaxBreakdown([
+    ...dbItems.map((dbItem: any) => ({
+      price_snapshot_cents: payAmounts.get(dbItem.id)!,
+      quantity: 1,
+      tax_category_snapshot: dbItem.tax_category_snapshot,
+    })),
+    ...paySessions.map(s => ({
+      price_snapshot_cents: s.amount,
+      quantity: 1,
+      tax_category_snapshot: 'standard',
+    })),
+  ]);
   const discSplit = Math.min(Math.max(0, Math.floor(Number(discount_cents))), rawTaxSplit.subtotal_cents);
   const tax = applyDiscountToTax(rawTaxSplit, discSplit);
   const total = tax.subtotal_cents + tip;
@@ -531,6 +577,23 @@ router.post('/:id/split-pay', async (req: Request, res: Response) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(splitTabId, dbItem.product_id, dbItem.name_snapshot, unitPrice,
          dbItem.tax_category_snapshot, qty, dbItem.note, dbItem.kind, now);
+    }
+
+    // Running sessions: the paid amount becomes a billiard line on the split copy
+    // and is credited on the session itself. The table keeps running; /stop bills
+    // the rest. No line item exists on the original tab yet, so there's nothing
+    // to reduce there.
+    for (const { row, amount, name } of paySessions) {
+      db.prepare(`
+        INSERT INTO line_items (tab_id, product_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, kind, created_at)
+        VALUES (?, NULL, ?, ?, 'standard', 1, 'billiard', ?)
+      `).run(splitTabId, name, amount, now);
+      db.prepare('UPDATE billiard_sessions SET prepaid_cents = prepaid_cents + ? WHERE id = ?')
+        .run(amount, row.id);
+      logEvent('billiard_prepaid', tabId, {
+        session_id: row.id, table_id: row.pool_table_id,
+        amount_cents: amount, split_tab_id: splitTabId,
+      });
     }
 
     writeClose(splitTabId, {

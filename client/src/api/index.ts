@@ -107,10 +107,18 @@ export const tabsApi = {
     req<{ id: number }>(`/tabs/${tabId}`, { method: 'DELETE' }),
   quickPay: (items: Array<{ product_id: number; quantity: number; variant_id?: number; custom_price_cents?: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
     req<Tab>('/tabs/quick-pay', { method: 'POST', body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }) }),
-  splitPay: (tabId: number, items: Array<{ id: number; quantity: number }>, payment_method: 'cash' | 'card', tip_cents: number, discount_cents = 0) =>
+  // `sessions` pays against still-running pool/dart tables without stopping them.
+  splitPay: (
+    tabId: number,
+    items: Array<{ id: number; quantity: number; amount_cents?: number }>,
+    payment_method: 'cash' | 'card',
+    tip_cents: number,
+    discount_cents = 0,
+    sessions: Array<{ id: number; amount_cents: number }> = [],
+  ) =>
     req<{ paid_tab: Tab; remaining_tab: Tab | null }>(`/tabs/${tabId}/split-pay`, {
       method: 'POST',
-      body: JSON.stringify({ items, payment_method, tip_cents, discount_cents }),
+      body: JSON.stringify({ items, sessions, payment_method, tip_cents, discount_cents }),
     }),
   correctTip: (tabId: number, tip_cents: number) =>
     req<{ storno: Tab; reissue: Tab }>(`/tabs/${tabId}/correct-tip`, { method: 'POST', body: JSON.stringify({ tip_cents }) }),

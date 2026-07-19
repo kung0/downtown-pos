@@ -1,6 +1,7 @@
 import db from './client';
-import type { Tab, LineItem, BilliardSession } from '@downtown/shared';
+import type { Tab, LineItem, BilliardSession, TableType } from '@downtown/shared';
 import type { TseResult } from '../services/tse';
+import { runningCostCents } from '../services/poolPricing';
 
 interface TabRow {
   id: number; customer_name: string; notes: string | null; status: string; opened_at: string;
@@ -14,6 +15,27 @@ interface TabRow {
   tse_status: 'ok' | 'offline' | null;
   subtotal_standard_cents: number | null; subtotal_reduced_cents: number | null;
   session_id: number | null;
+}
+
+// Prices each still-running session as of now, using the same math as the live
+// ticker and /stop. Rows must carry table_type (join pool_tables). Without this
+// a freshly loaded client shows a running table at 0 € until the first tick.
+export function withRunningCost<T extends { started_at: string; hourly_rate_snapshot_cents: number; table_type?: TableType }>(
+  sessions: T[],
+): Array<T & { running_cost_cents: number }> {
+  const now = new Date();
+  return sessions.map(s => ({
+    ...s,
+    running_cost_cents: runningCostCents(
+      s.table_type ?? 'billiard', new Date(s.started_at), s.hourly_rate_snapshot_cents, now,
+    ),
+  }));
+}
+
+// What's still owed on a running session: live cost minus anything already paid
+// off it via split-pay. Never negative — overpaying a table is not a credit.
+export function sessionDueCents(s: { running_cost_cents?: number; prepaid_cents?: number }): number {
+  return Math.max(0, (s.running_cost_cents ?? 0) - (s.prepaid_cents ?? 0));
 }
 
 export function buildTab(id: number): Tab | undefined {
@@ -30,12 +52,12 @@ export function buildTab(id: number): Tab | undefined {
   const running_total_cents = items.reduce(
     (sum, i) => sum + i.price_snapshot_cents * i.quantity, 0
   );
-  const active_sessions = db.prepare(`
+  const active_sessions = withRunningCost(db.prepare(`
     SELECT bs.*, pt.label AS table_label, pt.type AS table_type
     FROM billiard_sessions bs
     JOIN pool_tables pt ON pt.id = bs.pool_table_id
     WHERE bs.tab_id = ? AND bs.ended_at IS NULL
-  `).all(id) as BilliardSession[];
+  `).all(id) as BilliardSession[]);
   return { ...row, items, running_total_cents, active_sessions } as Tab;
 }
 

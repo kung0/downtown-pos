@@ -13,6 +13,7 @@ interface SessionRow {
   id: number; tab_id: number; pool_table_id: number; started_at: string;
   ended_at: string | null; hourly_rate_snapshot_cents: number;
   computed_cost_cents: number | null; line_item_id: number | null; created_at: string;
+  prepaid_cents: number;
   tab_customer_name?: string;
 }
 
@@ -109,11 +110,17 @@ router.post('/:tableId/stop', (req: Request, res: Response) => {
   const activityName = tableRow?.type === 'dart' ? 'Dart' : 'Billard';
   const nameSnapshot = activityName;
 
+  // Anything paid while the table was still running is credited here, so the tab
+  // only gets billed the remainder. computed_cost_cents stays the full cost —
+  // the gap between it and the line item is what the receipt shows as prepaid.
+  const prepaid = session.prepaid_cents ?? 0;
+  const dueCents = Math.max(0, costCents - prepaid);
+
   const { lastInsertRowid } = db.prepare(`
     INSERT INTO line_items
       (tab_id, product_id, name_snapshot, price_snapshot_cents, tax_category_snapshot, quantity, kind, created_at)
     VALUES (?, NULL, ?, ?, 'standard', 1, 'billiard', ?)
-  `).run(session.tab_id, nameSnapshot, costCents, nowIso);
+  `).run(session.tab_id, nameSnapshot, dueCents, nowIso);
 
   const lineItemId = Number(lastInsertRowid);
   db.prepare('UPDATE billiard_sessions SET line_item_id = ? WHERE id = ?').run(lineItemId, session.id);
@@ -121,6 +128,7 @@ router.post('/:tableId/stop', (req: Request, res: Response) => {
 
   logEvent('billiard_stopped', session.tab_id, {
     session_id: session.id, table_id: tableId, cost_cents: costCents,
+    prepaid_cents: prepaid, due_cents: dueCents,
   });
 
   const result = getTableWithSession(tableId);
@@ -173,6 +181,12 @@ router.post('/:tableId/cancel', (req: Request, res: Response) => {
   ).get(tableId) as SessionRow | undefined;
 
   if (!session) return void res.status(404).json({ error: 'no active session on this table' });
+  // Cancel writes the session off at 0 €. If part of it is already paid there's
+  // nothing to undo it against — stop the table instead so the payment lands on
+  // a line item.
+  if (session.prepaid_cents > 0) {
+    return void res.status(409).json({ error: 'session is already partly paid — stop it instead of cancelling' });
+  }
 
   stopTicker(session.id);
   db.prepare('UPDATE billiard_sessions SET ended_at = ?, computed_cost_cents = 0 WHERE id = ?')
