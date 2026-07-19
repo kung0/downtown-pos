@@ -349,6 +349,7 @@ export function buildShiftReport(s: ShiftSummary): Buffer {
   p.push(col('Tabs abgeschlossen', String(s.tab_count)));
   p.push(col('Durchschnitt / Tab', euro(s.avg_tab_cents)));
   p.push(col(`Trinkgeld`, euro(s.tip_cents)));
+  if (s.discount_cents !== 0) p.push(col('Rabatte', euro(-s.discount_cents)));
   p.push(divider('-'));
 
   // ── payment breakdown ─────────────────────────────────────────

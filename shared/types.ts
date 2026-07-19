@@ -162,6 +162,7 @@ export interface DailySummary {
   date: string;
   tab_count: number;
   subtotal_cents: number;
+  discount_cents: number;
   tip_cents: number;
   total_cents: number;
   tax_cents: number;
@@ -207,6 +208,7 @@ export interface ShiftSummary {
   session: Session;
   tab_count: number;
   subtotal_cents: number;
+  discount_cents: number;
   tip_cents: number;
   total_cents: number;
   tax_standard_cents: number;

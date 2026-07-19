@@ -230,6 +230,7 @@ export function summarizeClosedTabs(closed: any[]) {
   return {
     tab_count: realTabs.length,
     subtotal_cents: sum('subtotal_cents'),
+    discount_cents: sum('discount_cents'),
     tip_cents: sum('tip_cents'),
     total_cents,
     tax_cents: sum('tax_cents'),

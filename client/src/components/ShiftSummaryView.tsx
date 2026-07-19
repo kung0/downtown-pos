@@ -26,6 +26,12 @@ export default function SummaryBody({ summary }: { summary: ShiftSummary }) {
           <div className="stat-card__label">Tips</div>
           <div className="stat-card__value">{formatMoney(summary.tip_cents)}</div>
         </div>
+        {summary.discount_cents !== 0 && (
+          <div className="stat-card">
+            <div className="stat-card__label">Rabatte</div>
+            <div className="stat-card__value">{formatMoney(-summary.discount_cents)}</div>
+          </div>
+        )}
       </div>
 
       <div className="reports-section">
