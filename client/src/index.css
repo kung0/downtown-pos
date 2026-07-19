@@ -1366,7 +1366,6 @@ select.field__input { cursor: pointer; }
   .table th, .table td { padding: 10px 10px; }
 
   .orders-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .tabs-panel { max-height: 35vh; }
   .tabs-panel--mobile-hidden { display: none; }
   .detail-panel--mobile-hidden { display: none; }
   .product-grid-panel--mobile-hidden { display: none; }
@@ -1383,9 +1382,27 @@ select.field__input { cursor: pointer; }
 
   .tabs-panel__new-order-btn { display: none; }
   .tabs-panel__toggle { display: inline; }
-  .tabs-panel__header { cursor: pointer; }
+  .tabs-panel__header { cursor: pointer; padding: 16px 14px; }
+  .tabs-panel__title { font-size: 13px; }
   .tabs-panel--collapsed .tabs-panel__search,
   .tabs-panel--collapsed .tabs-panel__list { display: none; }
+
+  /* expanded tab list takes over the whole screen (below the nav) */
+  .tabs-panel:not(.tabs-panel--collapsed) {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    border-right: none;
+  }
+
+  /* bigger touch targets in the list */
+  .tabs-panel__list { padding: 10px; gap: 8px; }
+  .tab-card { padding: 16px 16px; }
+  .tab-card__name { font-size: 17px; margin-bottom: 6px; }
+  .tab-card__meta { font-size: 14px; }
 }
 
 /* ── Product grid parent/child labels ── */
