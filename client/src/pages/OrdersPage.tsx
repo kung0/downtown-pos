@@ -153,6 +153,14 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
   // keep the product search focused after a modal (variant / misc picker) steals it
   const refocusProductSearch = () => setTimeout(() => productSearchRef.current?.focus(), 30);
 
+  // Back to the top of the menu: no search text, no category drilldown. Called
+  // after every payment so the next order starts from a clean grid.
+  function resetMenu() {
+    setProductSearch('');
+    setCatParent(null);
+    setCatSub(null);
+  }
+
   // ── cart helpers ──────────────────────────────────────────────
   const cartQty   = (id: number) => cart.filter(c => c.product.id === id).reduce((s, c) => s + c.quantity, 0);
   const cartTotal = cart.reduce((s, c) => s + (c.customPrice ?? c.variantPrice ?? c.product.price_cents) * c.quantity, 0);
@@ -483,6 +491,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setCart([]);
       setPrintOrders(true);
       setShowDirectPay(false);
+      resetMenu();
       setReceipt(closed);
     } catch (e) {
       alert((e as Error).message);
@@ -702,6 +711,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
         setSelectedId(null);
       }
       setShowSplit(false);
+      resetMenu();
       setReceipt(result.paid_tab);
     } catch (e) {
       alert((e as Error).message);
@@ -732,6 +742,7 @@ export default function OrdersPage({ jumpTabId, onJumpConsumed }: Props = {}) {
       setTabs(prev => prev.filter(t => t.id !== closed.id));
       setSelectedId(null);
       setShowClose(false);
+      resetMenu();
       setReceipt(closed);
     } catch (e) {
       alert((e as Error).message);
